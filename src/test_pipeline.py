@@ -7,6 +7,7 @@ import base64
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sqlite3
 import struct
@@ -2028,6 +2029,91 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(dup_item["matched_target"], "/o/Artist/Album/01.flac")
             finally:
                 db_conn.close()
+
+
+class TestFrontendStaticContracts(unittest.TestCase):
+    """前端单文件 dashboard.html 的纯 Python 静态契约安全测试。
+    在不依赖 Node.js/Jest/Playwright 的前提下，通过正则/JSON 解析
+    实现对 DOM ID 完整性、国际化多语言键完整性、严禁裸读 I18N 等契约的断言，
+    从源头杜绝因属性拼写错误或 DOM ID 不匹配导致的前端运行时卡死。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        html_path = Path(__file__).resolve().parent / "dashboard.html"
+        if not html_path.exists():
+            raise unittest.SkipTest(f"{html_path} not found")
+        cls.html_content = html_path.read_text(encoding="utf-8")
+
+    def test_frontend_dom_ids_integrity(self):
+        """断言 JS 代码中通过 getElementById 引用的所有 ID 必须在 HTML 中存在。"""
+        # 1. 提取所有 HTML 中的 id
+        declared_ids = set(re.findall(r'\bid=["\']([a-zA-Z0-9_\-]+)["\']', self.html_content))
+        # 2. 提取所有 JS 中 getElementById("...") 引用的 ID
+        referenced_ids = set(re.findall(r'document\.getElementById\(["\']([a-zA-Z0-9_\-]+)["\']\)', self.html_content))
+
+        self.assertGreater(len(referenced_ids), 50, "未能提取到足够的前端 DOM ID 引用")
+        missing_ids = referenced_ids - declared_ids
+        self.assertEqual(missing_ids, set(), f"JS 引用的 DOM ID 在 HTML 中不存在: {missing_ids}")
+
+    def test_frontend_i18n_keys_integrity(self):
+        """断言 JS 中所有 t('...') 调用的多语言 key 必须在中英两套语言包中 100% 存在。"""
+        # 1. 提取 const I18N = { ... }; 字典定义
+        match = re.search(r'const I18N = (\{.*?\n    \});\n\n    let currentLang', self.html_content, re.DOTALL)
+        self.assertIsNotNone(match, "未能从 dashboard.html 中定位到 const I18N 定义")
+        js_code = match.group(1)
+
+        # 2. 转换为合法 JSON
+        # 去除单行注释
+        s = re.sub(r'//[^\n]*', '', js_code)
+        # 将反引号模板字符串转义为标准双引号字符串
+        def repl_backtick(m):
+            content = m.group(1).replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '')
+            return f'"{content}"'
+        s = re.sub(r'`(.*?)`', repl_backtick, s, flags=re.DOTALL)
+        # 给未加引号的 key 加上双引号
+        s = re.sub(r'([{,]\s*)([a-zA-Z0-9_\-]+)\s*:', r'\1"\2":', s)
+        # 移除末尾多余逗号
+        s = re.sub(r',\s*([}\]])', r'\1', s)
+
+        i18n_data = json.loads(s)
+        self.assertIn("zh", i18n_data)
+        self.assertIn("en", i18n_data)
+        zh = i18n_data["zh"]
+        en = i18n_data["en"]
+
+        # 3. 提取所有 t("...") 或 t('...') 调用
+        t_calls = sorted(set(re.findall(r'\bt\(["\']([a-zA-Z0-9_\.]+)["\']', self.html_content)))
+        self.assertGreater(len(t_calls), 50, "未能提取到足够的前端 t() 国际化键调用")
+
+        def check_path(tree, path):
+            if path.endswith('.'):
+                clean_path = path.rstrip('.')
+                curr = tree
+                for part in clean_path.split('.'):
+                    if not isinstance(curr, dict) or part not in curr:
+                        return False
+                    curr = curr[part]
+                return isinstance(curr, dict) and len(curr) > 0
+            else:
+                curr = tree
+                for part in path.split('.'):
+                    if not isinstance(curr, dict) or part not in curr:
+                        return False
+                    curr = curr[part]
+                return True
+
+        missing_zh = [p for p in t_calls if not check_path(zh, p)]
+        missing_en = [p for p in t_calls if not check_path(en, p)]
+
+        self.assertEqual(missing_zh, [], f"以下 t() 键在 zh 字典中缺失: {missing_zh}")
+        self.assertEqual(missing_en, [], f"以下 t() 键在 en 字典中缺失: {missing_en}")
+
+    def test_frontend_no_raw_i18n_access(self):
+        """断言代码中不存在随意裸读 I18N[currentLang] 的行为，必须统一使用 t() 安全函数。"""
+        # 只允许在 t() 内部和 setLanguage() 内部出现最多 2 处
+        raw_accesses = [line.strip() for line in self.html_content.splitlines() if "I18N[" in line]
+        self.assertLessEqual(len(raw_accesses), 2, f"发现违规裸读 I18N[...]: {raw_accesses}")
 
 
 if __name__ == "__main__":

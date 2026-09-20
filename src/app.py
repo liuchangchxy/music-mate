@@ -1298,6 +1298,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send(400, "请求格式错误")
             return
 
+        if not isinstance(body, dict):
+            self.send(400, "请求格式错误，必须为 JSON 对象")
+            return
+
         if self.path == "/api/verify-password":
             if self.is_authenticated(body):
                 self.send(200, json.dumps({"ok": True, "valid": True}, ensure_ascii=False), "application/json")

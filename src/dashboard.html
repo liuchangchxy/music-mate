@@ -1335,6 +1335,9 @@
       </div>
     </header>
 
+    <!-- Global Uncaught Error Banner (hidden by default) -->
+    <div id="globalErrorNotice" style="display:none; background:rgba(239,68,68,0.12); border:1px solid #ef4444; color:#ef4444; padding:8px 14px; border-radius:8px; margin-bottom:12px; font-size:12px; font-weight:500;"></div>
+
     <!-- Main Live Progress & Status -->
     <section class="status-card">
       <div class="status-header">
@@ -2124,6 +2127,19 @@
   </div>
 
   <script>
+    // Global Error & Promise Rejection Safety Barrier
+    window.addEventListener("error", (event) => {
+      console.error("[MusicMate UI Error]", event.error || event.message);
+      const notice = document.getElementById("globalErrorNotice");
+      if (notice) {
+        notice.style.display = "block";
+        notice.textContent = `⚠️ 前端运行时异常: ${event.message || event.error || "未知错误"}`;
+      }
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      console.error("[MusicMate UI Unhandled Rejection]", event.reason);
+    });
+
     // =========================================================================
     // Comprehensive Internationalization (i18n) Framework
     // =========================================================================
@@ -2862,11 +2878,14 @@
 
     let currentLang = localStorage.getItem("fn-music-lang") || ((navigator.language && navigator.language.startsWith("en")) ? "en" : "zh");
 
-    function t(path) {
+    function t(path, defaultVal) {
+      if (!path) return defaultVal !== undefined ? defaultVal : "";
       const keys = path.split(".");
-      let val = I18N[currentLang];
+      let val = (I18N && I18N[currentLang]) ? I18N[currentLang] : (I18N && I18N.zh);
       for (const k of keys) {
-        if (!val || val[k] === undefined) return path;
+        if (!val || val[k] === undefined) {
+          return defaultVal !== undefined ? defaultVal : path;
+        }
         val = val[k];
       }
       return val;
@@ -3503,9 +3522,9 @@
       if (elFailed) elFailed.textContent = totalExceptions.toLocaleString();
 
       const failedHint = document.getElementById("m-failed-hint");
+      const mH = t("metricsHints") || {};
       if (failedHint) {
         const fbCount = (typeof stateCache !== "undefined" && stateCache && stateCache.fallback_count !== undefined) ? stateCache.fallback_count : (m.fallback_published || 0);
-        const mH = I18N[currentLang].metricsHints;
         if (fbCount > 0) {
           failedHint.textContent = `${mH.fallbackNotice || (currentLang === 'zh' ? '未匹配标签' : 'Fallback')}: ${fbCount} · 点击处置`;
         } else if (totalExceptions > 0) {
@@ -3519,34 +3538,31 @@
       const scannedHint = document.getElementById("m-scanned-hint");
       if (scannedHint) {
         const parts = [];
-        const pDict = I18N[currentLang].metricsHints.scannedParts;
+        const pDict = t("metricsHints.scannedParts") || {};
         if (m.new_files || m.modified_files || m.stale_decisions || m.retry_files) {
-          parts.push(`${pDict.newFiles}: ${m.new_files || 0} · ${pDict.modified}: ${m.modified_files || 0} · ${pDict.stale}: ${m.stale_decisions || 0} · ${pDict.retry}: ${m.retry_files || 0}`);
+          parts.push(`${pDict.newFiles || '新增'}: ${m.new_files || 0} · ${pDict.modified || '改动'}: ${m.modified_files || 0} · ${pDict.stale || '重判'}: ${m.stale_decisions || 0} · ${pDict.retry || '回补'}: ${m.retry_files || 0}`);
         }
-        if (m.orphans_archived) parts.push(`${pDict.orphans}: ${m.orphans_archived}`);
-        scannedHint.textContent = parts.length ? parts.join(" · ") : I18N[currentLang].metricsHints.scannedDefault;
+        if (m.orphans_archived) parts.push(`${pDict.orphans || '归档'}: ${m.orphans_archived}`);
+        scannedHint.textContent = parts.length ? parts.join(" · ") : (mH.scannedDefault || "原始源音频发现量");
       }
 
       const acoustHint = document.getElementById("m-acoustic-hint");
       if (acoustHint) {
-        const mH = I18N[currentLang].metricsHints;
-        acoustHint.textContent = `${mH.acousticPrefix} · ${mH.qualityUpgraded}: ${m.quality_upgraded || 0}`;
+        acoustHint.textContent = `${mH.acousticPrefix || '同录音匹配'} · ${mH.qualityUpgraded || '品质优化'}: ${m.quality_upgraded || 0}`;
       }
 
       const lyrHint = document.getElementById("m-lyrics-hint");
       if (lyrHint) {
         const lyrEmbedded = (m.lyrics_embedded || 0).toLocaleString();
         const lyrPresent = (m.lyrics_already_present || 0).toLocaleString();
-        const mH = I18N[currentLang].metricsHints;
-        lyrHint.textContent = `${mH.lyricsEmbedded}: ${lyrEmbedded} · ${mH.lyricsRetained}: ${lyrPresent}`;
+        lyrHint.textContent = `${mH.lyricsEmbedded || '内嵌下载'}: ${lyrEmbedded} · ${mH.lyricsRetained || '保留已有'}: ${lyrPresent}`;
       }
 
       const covHint = document.getElementById("m-cover-hint");
       if (covHint) {
         const covEmbedded = (m.cover_embedded !== undefined ? m.cover_embedded : (m.cover_art_embedded || 0)).toLocaleString();
         const covPresent = (m.cover_already_present !== undefined ? m.cover_already_present : (m.cover_art_already_present || 0)).toLocaleString();
-        const mH = I18N[currentLang].metricsHints;
-        covHint.textContent = `${mH.coverEmbedded}: ${covEmbedded} · ${mH.coverRetained}: ${covPresent}`;
+        covHint.textContent = `${mH.coverEmbedded || '高清写入'}: ${covEmbedded} · ${mH.coverRetained || '保留已有'}: ${covPresent}`;
       }
     }
 
@@ -3596,7 +3612,7 @@
             }
             return parts[parts.length - 1] || p;
           };
-          const quickSelText = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.quickSelect) || "快捷选择目录...";
+          const quickSelText = t("controls.quickSelect", "快捷选择目录...");
           const opts = `<option value="">${escapeHTML(quickSelText)}</option>` + cfg.accessible_dirs.map(d => {
             const label = formatPathLabel(d);
             return `<option value="${escapeHTML(d)}">${escapeHTML(label)} (${escapeHTML(d)})</option>`;
@@ -3609,7 +3625,7 @@
       // Update directory badges
       const sBadge = document.getElementById("sourceStatusBadge");
       const oBadge = document.getElementById("outputStatusBadge");
-      const sb = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.statusBadges) ? I18N[currentLang].controls.statusBadges : {
+      const defaultSb = {
         unconfigured: "未配置",
         sourceOk: "🟢 只读就绪",
         sourceMissing: "🔴 未挂载/不存在",
@@ -3618,6 +3634,7 @@
         outputMissing: "🔴 未挂载/不存在",
         outputNoPerm: "⚠️ 不可写(无权限)"
       };
+      const sb = Object.assign({}, defaultSb, t("controls.statusBadges", {}));
 
       if (sBadge) {
         if (!cfg.source_dir) {
@@ -3736,7 +3753,7 @@
         const anchor = document.getElementById("schedAnchorTime") ? document.getElementById("schedAnchorTime").value : "00:00";
         const hours = document.getElementById("schedIntervalHours") ? document.getElementById("schedIntervalHours").value : "6";
         const pts = calcIntervalPoints(anchor, hours);
-        const pfx = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.schedPlanPoints) || "计划执行点：";
+        const pfx = t("controls.schedPlanPoints", "计划执行点：");
         pointsBar.textContent = `${pfx}${pts.join(" · ")}`;
         pointsBar.style.display = "block";
       } else {
@@ -3788,13 +3805,13 @@
       handleSchedRuleChange(rule);
 
       if (!enabled) {
-        statusText.textContent = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.schedPaused) || "定时任务已暂停";
+        statusText.textContent = t("controls.schedPaused", "定时任务已暂停");
         statusText.style.color = "var(--text-muted)";
       } else if (!isInit) {
-        statusText.textContent = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.schedNeedInit) || "⚠️ 需先完成首次整理";
+        statusText.textContent = t("controls.schedNeedInit", "⚠️ 需先完成首次整理");
         statusText.style.color = "#f59e0b";
       } else if (s.next_run) {
-        const pfx = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.schedNextRun) || "下次执行：";
+        const pfx = t("controls.schedNextRun", "下次执行：");
         statusText.textContent = `${pfx}${s.next_run}`;
         statusText.style.color = "var(--text-secondary)";
       } else {
@@ -3872,7 +3889,7 @@
             saveBtn.textContent = "✓";
             setTimeout(() => {
               if (saveBtn) {
-                saveBtn.textContent = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.saveSchedBtn) || "保存计划";
+                saveBtn.textContent = t("controls.saveSchedBtn", "保存计划");
                 saveBtn.disabled = false;
               }
             }, 1200);
@@ -3884,7 +3901,7 @@
       }
       if (saveBtn) {
         saveBtn.disabled = false;
-        saveBtn.textContent = (I18N[currentLang] && I18N[currentLang].controls && I18N[currentLang].controls.saveSchedBtn) || "保存计划";
+        saveBtn.textContent = t("controls.saveSchedBtn", "保存计划");
       }
     }
 
