@@ -1,26 +1,18 @@
 [
   {
-    "stepTitle": "配置服务与音乐主目录 / Configuration",
+    "stepTitle": "配置服务端口 / Configure Service Port",
     "items": [
       {
         "type": "text",
         "field": "service_port",
-        "label": "Web 服务端口 / Service Port（默认 8091）",
+        "label": "Web 服务端口 / Web Service Port（默认 8091）",
         "initValue": "8091",
         "placeholder": "8091",
         "rules": [{"required": true, "message": "请输入有效的端口号（如 8091）"}]
       },
       {
-        "type": "text",
-        "field": "MUSIC_PATH",
-        "label": "NAS 音乐大文件夹物理路径 / Music Root Path",
-        "initValue": "/vol2/1000/Download/音乐",
-        "placeholder": "例：/vol2/1000/Download/音乐 或 /vol1/1000/Music",
-        "rules": [{"required": true, "message": "请输入存放音乐的真实存储卷路径（可在文件管理属性中复制）"}]
-      },
-      {
         "type": "tips",
-        "helpText": "💡 卷映射说明：您填写的 NAS 存储卷路径（如包含「整理前」和「整理后」的大文件夹）将直接挂载为容器内部的 /music 目录。在后续网页控制台中，您只需直接点选 /music 下的子目录（如 /music/整理前 和 /music/整理后）即可，无需手敲物理路径。"
+        "helpText": "💡 存储与文件夹访问说明 (Storage Notice)：\n1. 安装完成后，请在飞牛系统（fnOS）中为本应用授予音乐文件夹的访问权限（整理后曲库所在文件夹必须具有读写权限）。\n2. 授权完成后打开本应用 Web 控制台，即可在下拉菜单中直接选择，无需手动输入物理路径。\n\n• Notice: Please grant music folder access permissions to this app in fnOS (the organized library folder must have Read/Write permission).\n• Selection: Once granted in fnOS, you can select folders directly from the dropdown lists in the Web UI."
       }
     ]
   }

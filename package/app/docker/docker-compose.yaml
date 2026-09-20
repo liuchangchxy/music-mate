@@ -16,7 +16,6 @@ services:
     volumes:
       - "${TRIM_PKGVAR:-/var/apps/music-mate/var}:/appdata:rw"
       - /etc/localtime:/etc/localtime:ro
-      - "${MUSIC_PATH:-/vol2/1000/Download/音乐}:/music:rw"
     ports:
       - "${service_port:-8091}:8091"
     command: ["python3", "/opt/music-rebuild/app.py"]

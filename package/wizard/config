@@ -1,18 +1,18 @@
 [
   {
-    "stepTitle": "音乐主目录设置",
+    "stepTitle": "配置服务端口 / Configure Service Port",
     "items": [
       {
         "type": "text",
-        "field": "MUSIC_PATH",
-        "label": "NAS 音乐大文件夹物理路径",
-        "initValue": "/vol2/1000/Download/音乐",
-        "placeholder": "例：/vol2/1000/Download/音乐 或 /vol1/1000/Music",
-        "rules": [{"required": true, "message": "请输入存放音乐的真实存储卷路径（可在文件管理属性中复制）"}]
+        "field": "service_port",
+        "label": "Web 服务端口 / Web Service Port（默认 8091）",
+        "initValue": "8091",
+        "placeholder": "8091",
+        "rules": [{"required": true, "message": "请输入有效的端口号（如 8091）"}]
       },
       {
         "type": "tips",
-        "helpText": "💡 卷映射说明：您填写的 NAS 存储卷路径将挂载为容器内的 /music 目录。后续在网页控制台中，直接从下拉菜单选择 /music 下的子目录即可。"
+        "helpText": "💡 存储权限说明：若需更改音乐文件夹，请在飞牛系统（fnOS）的「应用设置 -> 存储权限」中为本应用添加或修改授权目录，随后在网页控制台下拉菜单中重新选择即可。"
       }
     ]
   }
