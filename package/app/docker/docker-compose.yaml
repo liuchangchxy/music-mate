@@ -14,7 +14,7 @@ services:
       MUSIC_METADATA_WORKERS: "${MUSIC_METADATA_WORKERS:-auto}"
       TZ: "${TZ:-Asia/Shanghai}"
     volumes:
-      - "${TRIM_PKGVAR:-/var/apps/fn-music-companion/var}:/appdata:rw"
+      - "${TRIM_PKGVAR:-/var/apps/music-mate/var}:/appdata:rw"
       - /etc/localtime:/etc/localtime:ro
       - "${MUSIC_PATH:-/vol2/1000/Download/音乐}:/music:rw"
     ports:

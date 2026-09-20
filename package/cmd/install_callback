@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eu
 
-TARGET_UI_CONFIG="${TRIM_APPDEST:-/var/apps/fn-music-companion/target}/ui/config"
+TARGET_UI_CONFIG="${TRIM_APPDEST:-/var/apps/music-mate/target}/ui/config"
 if [ -f "$TARGET_UI_CONFIG" ] && [ -n "${service_port:-}" ]; then
   sed -i "s/\"port\": \"[0-9]*\"/\"port\": \"${service_port}\"/g" "$TARGET_UI_CONFIG" || true
 fi

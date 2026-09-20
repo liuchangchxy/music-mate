@@ -7,7 +7,7 @@
     "description": "专为 NAS 私有云量身打造的高保真音乐整理与元数据增强工具应用源（适配飞牛音乐）"
   },
   "apps": {
-    "fn-music-companion": {
+    "music-mate": {
       "display_name": "曲库伴侣 (MusicMate)",
       "desc": "专为 NAS 私有云量身打造的高保真音乐整理与元数据增强工具（适配飞牛音乐）：支持 Btrfs 写时复制大幅节省存储空间、源目录只读挂载保护安全、QQ音乐+网易云双引擎标签与歌词封面补全、声纹跨格式智能去重。",
       "platform": ["x86"],
@@ -33,9 +33,9 @@
           "os_min_version": "1.2.0401",
           "packages": {
             "x86": {
-              "download_url": "https://github.com/liuchangchxy/music-mate/releases/download/v1.1.0/fn-music-companion-v1.1.0.fpk",
-              "sha256": "cfd5cae53f38655353d2e03941a024a1c9a709052507145ad3836da7b1cb8e3b",
-              "size": 150962
+              "download_url": "https://github.com/liuchangchxy/music-mate/releases/download/v1.1.0/music-mate-v1.1.0.fpk",
+              "sha256": "1732a02503358e380e672e44c629e6130d8e0c4624cd2b827b1e1989a78abec5",
+              "size": 150933
             }
           }
         },
