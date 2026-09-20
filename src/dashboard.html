@@ -3959,7 +3959,6 @@
       }
 
       const allItems = currentRunDetails.items || [];
-      const s = r.summary || {};
       const m = (s && s.metrics) ? s.metrics : (s || {});
 
       const countPublished = allItems.filter(it => it.disposition === "published" || it.disposition === "copied").length;
