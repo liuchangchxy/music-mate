@@ -896,7 +896,7 @@ def start_scheduler() -> None:
     global SCHEDULER_THREAD
     if SCHEDULER_THREAD is None or not SCHEDULER_THREAD.is_alive():
         SCHEDULER_STOP_EVENT.clear()
-        SCHEDULER_THREAD = threading.Thread(target=scheduler_loop, daemon=True, name="MusicFlow-Scheduler")
+        SCHEDULER_THREAD = threading.Thread(target=scheduler_loop, daemon=True, name="MusicMate-Scheduler")
         SCHEDULER_THREAD.start()
 
 
@@ -1214,7 +1214,7 @@ class Handler(BaseHTTPRequestHandler):
                     data = LOG.read_bytes()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/octet-stream; charset=utf-8")
-                    self.send_header("Content-Disposition", 'attachment; filename="musicflow-runtime.log"')
+                    self.send_header("Content-Disposition", 'attachment; filename="musicmate-runtime.log"')
                     self.send_header("Content-Length", str(len(data)))
                     self.send_header("Cache-Control", "no-cache")
                     self.end_headers()

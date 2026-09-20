@@ -1,11 +1,11 @@
-# 飞牛音乐伴侣 (MusicFlow for fnOS)
+# 曲库伴侣 (MusicMate)
 
 <p align="center">
-  <img src="package/ICON_256.PNG" width="128" height="128" alt="MusicFlow Icon" style="border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.2);">
+  <img src="package/ICON_256.PNG" width="128" height="128" alt="MusicMate Icon" style="border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.2);">
 </p>
 
 <p align="center">
-  <strong>专为 fnOS 飞牛私有云量身打造的高保真无损音乐整理与元数据增强引擎</strong>
+  <strong>专为 NAS 私有云打造的高保真无损音乐整理与元数据增强引擎（完美适配飞牛音乐）</strong>
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="screenshot_dashboard.png" width="95%" alt="飞牛音乐伴侣控制台全貌" style="border-radius: 8px; box-shadow: 0 12px 36px rgba(0,0,0,0.35);">
+  <img src="screenshot_dashboard.png" width="95%" alt="曲库伴侣控制台全貌" style="border-radius: 8px; box-shadow: 0 12px 36px rgba(0,0,0,0.35);">
 </p>
 
 ---
@@ -33,7 +33,7 @@
 - **标签与歌词缺失**：歌曲内嵌标签缺失或繁简混杂，缺少内嵌专辑封面或双语同步歌词，WAV 格式存在标签遮蔽；
 - **散乱无序**：目录层级缺乏规律，导致飞牛原生“音乐” App 难以归类和建库。
 
-**飞牛音乐伴侣** 旨在提供一条工业级的全自动音乐整理流水线：通过声学波形特征、时长物理门禁与加权置信度评分识别同曲目，完成解密、去重、标签清洗、双语歌词合并与超清封面抓取，并以 **Btrfs 写时复制（同卷大幅节省存储）** 输出为符合飞牛原生音乐 App 建库规范的标准目录（`歌手/专辑/曲目`）。
+**曲库伴侣 (MusicMate)** 旨在提供一条工业级的全自动音乐整理流水线：通过声学波形特征、时长物理门禁与加权置信度评分识别同曲目，完成解密、去重、标签清洗、双语歌词合并与超清封面抓取，并以 **Btrfs 写时复制（同卷大幅节省存储）** 输出为符合飞牛原生音乐 App 建库规范的标准目录（`歌手/专辑/曲目`）。
 
 ---
 
@@ -92,7 +92,7 @@ flowchart LR
 4. 在安装向导中确认 **Web 服务端口**（默认 8091，如遇占用可修改），点击完成安装；
 5. **授予文件夹访问权限**：
    - 在飞牛系统（fnOS）中为本应用授予所需音乐文件夹的访问权限（整理后曲库文件夹须具有读写权限）；
-6. 在飞牛桌面点击“飞牛音乐伴侣”图标打开控制台，在目录配置中直接从**下拉菜单中一键点选**整理前与整理后文件夹，即可开始极速整理！
+6. 在飞牛桌面点击“曲库伴侣”图标打开控制台，在目录配置中直接从**下拉菜单中一键点选**整理前与整理后文件夹，即可开始极速整理！
 
 > 💡 **关于飞牛「文件夹访问权限」配置说明 (Folder Permissions Guide)**：
 > - **权限中心接入**：本应用已 100% 严格接入飞牛官方权限规范（`trim.file.sharedAccess`），杜绝手输生硬物理路径。
@@ -124,7 +124,7 @@ services:
       # 整理后曲库：读写 (:rw)
       - /path/to/your/library:/music/output:rw
       # 程序状态账本与配置
-      - ./music_flow_data:/appdata:rw
+      - ./music_mate_data:/appdata:rw
     ports:
       - "8091:8091"
     user: "1000:1000"
@@ -172,7 +172,7 @@ docker compose up -d
 
 ## ☕ 赞助与支持
 
-本项目为独立开源作品，永久免费。如果飞牛音乐伴侣帮您理顺了庞大混乱的曲库、或者利用 Btrfs 写时复制帮您省下了宝贵的 NAS 硬盘空间，欢迎在控制台的“☕ 赞助打赏”面板中请作者喝一杯咖啡，鼓励更多功能迭代！
+本项目为独立开源作品，永久免费。如果曲库伴侣帮您理顺了庞大混乱的曲库、或者利用 Btrfs 写时复制帮您省下了宝贵的 NAS 硬盘空间，欢迎在控制台的“☕ 赞助打赏”面板中请作者喝一杯咖啡，鼓励更多功能迭代！
 
 ---
 

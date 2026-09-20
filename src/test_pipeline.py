@@ -20,7 +20,7 @@ from unittest.mock import patch
 # MUSIC_STATE at a scratch directory *before* loading the modules: patching
 # pipeline.STATE inside a test does not move the derived paths, and a run on a
 # host without a writable /state would die on PermissionError.
-_TEST_STATE = Path(tempfile.mkdtemp(prefix="musicflow-tests-"))
+_TEST_STATE = Path(tempfile.mkdtemp(prefix="musicmate-tests-"))
 atexit.register(shutil.rmtree, _TEST_STATE, ignore_errors=True)
 os.environ["MUSIC_STATE"] = str(_TEST_STATE)
 

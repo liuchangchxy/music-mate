@@ -1,15 +1,15 @@
 {
   "schema_version": "2",
   "source_info": {
-    "name": "飞牛音乐伴侣 (MusicFlow) 官方源",
+    "name": "曲库伴侣 (MusicMate) 官方源",
     "author": "liuchangchxy",
     "homepage": "https://github.com/liuchangchxy/fn-music-companion",
-    "description": "专为飞牛私有云 (fnOS) 量身打造的高保真音乐整理与元数据增强工具应用源"
+    "description": "专为 NAS 私有云量身打造的高保真音乐整理与元数据增强工具应用源（适配飞牛音乐）"
   },
   "apps": {
     "fn-music-companion": {
-      "display_name": "飞牛音乐伴侣 (MusicFlow)",
-      "desc": "专为飞牛私有云 (fnOS) 量身打造的高保真音乐整理与元数据增强工具：支持 Btrfs 写时复制大幅节省存储空间、源目录只读挂载保护安全、QQ音乐+网易云双引擎标签与歌词封面补全、声纹跨格式智能去重。",
+      "display_name": "曲库伴侣 (MusicMate)",
+      "desc": "专为 NAS 私有云量身打造的高保真音乐整理与元数据增强工具（适配飞牛音乐）：支持 Btrfs 写时复制大幅节省存储空间、源目录只读挂载保护安全、QQ音乐+网易云双引擎标签与歌词封面补全、声纹跨格式智能去重。",
       "platform": ["x86"],
       "categories": ["影音媒体", "系统工具"],
       "icon_url": "https://raw.githubusercontent.com/liuchangchxy/fn-music-companion/main/package/ICON_256.PNG",
