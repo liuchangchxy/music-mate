@@ -8,7 +8,11 @@ case "${1:-}" in
     exit 0
     ;;
   status)
-    docker inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -qx true
+    if docker inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -qx true; then
+      exit 0
+    else
+      exit 3
+    fi
     ;;
   *)
     exit 1

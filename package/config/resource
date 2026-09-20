@@ -1,4 +1,3 @@
 {
-  "api-scope": ["trim.file.sharedAccess", "trim.file.path"],
   "docker-project": {"projects": [{"name": "music-mate", "path": "docker"}]}
 }

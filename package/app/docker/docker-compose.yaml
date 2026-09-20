@@ -8,15 +8,17 @@ services:
     environment:
       MUSIC_STATE: /appdata/v6-state
       MUSIC_STATE_LIMIT_BYTES: "536870912"
-      MUSIC_UI_PORT: "${service_port:-8091}"
+      MUSIC_UI_PORT: "${service_port:-${TRIM_SERVICE_PORT:-8091}}"
       MUSIC_SAFE_SIMILARITY: "0.997"
       MUSIC_SAFE_DURATION_DELTA: "4.5"
       MUSIC_METADATA_WORKERS: "${MUSIC_METADATA_WORKERS:-auto}"
       TZ: "${TZ:-Asia/Shanghai}"
     volumes:
       - "${TRIM_PKGVAR:-/var/apps/music-mate/var}:/appdata:rw"
+      - "${MUSIC_PATH}:/music:rw"
       - /etc/localtime:/etc/localtime:ro
     ports:
-      - "${service_port:-8091}:8091"
+      - "${service_port:-${TRIM_SERVICE_PORT:-8091}}:8091"
     command: ["python3", "/opt/music-rebuild/app.py"]
+
 

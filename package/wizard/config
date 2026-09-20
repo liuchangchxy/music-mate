@@ -1,7 +1,14 @@
 [
   {
-    "stepTitle": "配置服务端口 / Configure Service Port",
+    "stepTitle": "修改配置 / Update Settings",
     "items": [
+      {
+        "type": "text",
+        "field": "MUSIC_PATH",
+        "label": "音乐根目录路径 / Music Storage Path",
+        "placeholder": "例如：/vol1/1000/Music 或 /vol2/1000/下载/音乐",
+        "rules": [{"required": true, "message": "请输入 NAS 上的音乐存储绝对路径"}]
+      },
       {
         "type": "text",
         "field": "service_port",
@@ -12,8 +19,9 @@
       },
       {
         "type": "tips",
-        "helpText": "💡 存储权限说明：若需更改音乐文件夹，请在飞牛系统（fnOS）的「应用设置 -> 存储权限」中为本应用添加或修改授权目录，随后在网页控制台下拉菜单中重新选择即可。"
+        "helpText": "💡 存储与生效说明：保存配置后，系统将自动使用新的卷映射路径平滑重启容器。更改后请确保对应目录在飞牛「文件管理」中已开启读写权限。"
       }
     ]
   }
 ]
+

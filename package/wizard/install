@@ -1,7 +1,14 @@
 [
   {
-    "stepTitle": "配置服务端口 / Configure Service Port",
+    "stepTitle": "基础配置 / Basic Settings",
     "items": [
+      {
+        "type": "text",
+        "field": "MUSIC_PATH",
+        "label": "音乐根目录路径 / Music Storage Path",
+        "placeholder": "例如：/vol1/1000/Music 或 /vol2/1000/下载/音乐",
+        "rules": [{"required": true, "message": "请输入 NAS 上的音乐存储绝对路径"}]
+      },
       {
         "type": "text",
         "field": "service_port",
@@ -12,8 +19,9 @@
       },
       {
         "type": "tips",
-        "helpText": "💡 存储与文件夹访问说明 (Storage Notice)：\n1. 安装完成后，请在飞牛系统（fnOS）中为本应用授予音乐文件夹的访问权限（整理后曲库所在文件夹必须具有读写权限）。\n2. 授权完成后打开本应用 Web 控制台，即可在下拉菜单中直接选择，无需手动输入物理路径。\n\n• Notice: Please grant music folder access permissions to this app in fnOS (the organized library folder must have Read/Write permission).\n• Selection: Once granted in fnOS, you can select folders directly from the dropdown lists in the Web UI."
+        "helpText": "💡 存储与权限说明 (Storage & Permission Notice)：\n1. 卷映射机制：此处填写的物理路径将被直接挂载为容器内部的 /music 目录。进入 Web 控制台后，您可直接通过目录选择器快速点选整理源目录与输出目录（如 /music/整理前 与 /music/整理后），无需反复输入长路径。\n2. 系统读写权限：请确保该音乐文件夹在飞牛「文件管理」中已对本应用开放读写权限，以便进行元数据嵌入与无损整理。\n3. 随时平滑修改：后续若调整存储位置，可在飞牛「应用中心」随时点击本应用的「配置」更新路径并平滑重启生效。"
       }
     ]
   }
 ]
+
