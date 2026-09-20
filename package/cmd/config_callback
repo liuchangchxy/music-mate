@@ -1,4 +1,9 @@
 #!/bin/bash
 set -eu
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/sync-accessible-mounts.sh" ]; then
+  bash "$SCRIPT_DIR/sync-accessible-mounts.sh" || true
+fi
+
 exit 0

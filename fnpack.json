@@ -34,8 +34,8 @@
           "packages": {
             "x86": {
               "download_url": "https://github.com/liuchangchxy/music-mate/releases/download/v1.1.0/music-mate-v1.1.0.fpk",
-              "sha256": "c250c3a999d083a7e618824d74fcb1258befdcf3586da39893afd4c82b54e197",
-              "size": 151017
+              "sha256": "68d1e101e36390d8c72239aff5d0d8be0e583709445c95afed62b9b8e4ae402f",
+              "size": 151721
             }
           }
         },

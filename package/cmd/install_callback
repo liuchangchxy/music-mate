@@ -6,4 +6,9 @@ if [ -f "$TARGET_UI_CONFIG" ] && [ -n "${service_port:-}" ]; then
   sed -i "s/\"port\": \"[0-9]*\"/\"port\": \"${service_port}\"/g" "$TARGET_UI_CONFIG" || true
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/sync-accessible-mounts.sh" ]; then
+  bash "$SCRIPT_DIR/sync-accessible-mounts.sh" || true
+fi
+
 exit 0
