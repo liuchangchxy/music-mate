@@ -3359,30 +3359,46 @@
 
     // Main Update Dashboard
     async function updateDashboard() {
-      const st = await fetchJSON("/api/status");
-      if (st) {
-        stateCache = st;
-        renderStatus(st);
-        if (st.report && st.report.metrics) {
-          renderMetrics(st.report.metrics);
+      try {
+        const st = await fetchJSON("/api/status");
+        if (st) {
+          stateCache = st;
+          renderStatus(st);
+          if (st.report && st.report.metrics) {
+            renderMetrics(st.report.metrics);
+          }
+          const runs = st.recent_runs || (st.report && st.report.recent_runs);
+          if (runs) {
+            renderRuns(runs);
+          }
+          renderUnresolvedBanner(st.unresolvable_count || 0);
         }
-        const runs = st.recent_runs || (st.report && st.report.recent_runs);
-        if (runs) {
-          renderRuns(runs);
-        }
-        renderUnresolvedBanner(st.unresolvable_count || 0);
+      } catch (err) {
+        console.error("Error rendering status/metrics:", err);
       }
 
-      const cfg = await fetchJSON("/api/config");
-      if (cfg) {
-        configCache = cfg;
-        renderConfig(cfg);
+      try {
+        const cfg = await fetchJSON("/api/config");
+        if (cfg) {
+          configCache = cfg;
+          renderConfig(cfg);
+        }
+      } catch (err) {
+        console.error("Error rendering config:", err);
       }
 
-      const logText = await fetchText("/api/log?tail=120");
-      renderLogs(logText);
+      try {
+        const logText = await fetchText("/api/log?tail=120");
+        renderLogs(logText);
+      } catch (err) {
+        console.error("Error rendering logs:", err);
+      }
 
-      updateActionButtons();
+      try {
+        updateActionButtons();
+      } catch (err) {
+        console.error("Error updating action buttons:", err);
+      }
     }
 
     // Render Status and Stepper
@@ -3495,7 +3511,7 @@
         } else if (totalExceptions > 0) {
           failedHint.textContent = `${currentLang === 'zh' ? '待处置疑难' : 'Pending'}: ${totalExceptions} · 点击查看`;
         } else {
-          failedHint.textContent = I18N[currentLang].cards.failedHint || '损坏或拒绝文件: 0';
+          failedHint.textContent = t("metrics.failedHint") || '损坏或拒绝文件';
         }
       }
 
