@@ -1449,13 +1449,13 @@
         <span class="hint">Live/Remaster 歧义保留</span>
       </div>
 
-      <div class="card">
+      <div class="card" id="card-failed" style="cursor: pointer;" onclick="openUnresolvedModal()" title="点击查看疑难与降级发布详情">
         <div class="card-top">
-          <span>处理失败异常</span>
+          <span id="label-failed">异常与疑难处置</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#cf222e" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
         </div>
         <b id="m-failed">0</b>
-        <span class="hint">损坏或拒绝文件</span>
+        <span class="hint" id="m-failed-hint">损坏或拒绝文件</span>
       </div>
     </div>
 
@@ -2168,10 +2168,11 @@
           cover: "高清封面覆盖",
           version: "疑似版本组",
           versionHint: "Live/Remaster 歧义保留",
-          failed: "处理失败异常",
+          failed: "异常与疑难处置",
           failedHint: "损坏或拒绝文件"
         },
         metricsHints: {
+          fallbackNotice: "未匹配云端标签",
           scannedParts: {
             newFiles: "新增",
             modified: "改动",
@@ -2463,12 +2464,17 @@
           emptyItems: "该筛选条件下无文件记录"
         },
         unresolvedModal: {
-          title: "疑难曲目隔离与人工处置",
-          subtitle: "熔断隔离机制保护 · 告别无限无效重试，保障增量秒级整理",
-          loading: "⏳ 正在加载疑难曲目清单...",
-          emptyTitle: "🎉 当前没有疑难曲目！",
+          title: "异常、疑难与降级发布管理",
+          subtitle: "隔离熔断保护 · 降级归档追踪 · 告别无限重试，保障增量秒级整理",
+          loading: "⏳ 正在加载清单...",
+          tabUnresolved: "熔断与损坏待办",
+          tabFallbacks: "未匹配标签降级发布",
+          emptyTitle: "🎉 当前没有熔断疑难曲目！",
           emptyDesc: "所有音频文件均已顺利处理或成功归档入库，曲库处于健康状态。",
-          bannerNotice: "💡 <b>为什么会有疑难曲目？</b><br/>极少数冷门歌曲、电台翻唱或原文件名乱码的音频，在线曲库无法检索到匹配歌词或元数据。系统已实施<b>最大 2 次重试熔断机制</b>并自动隔离，确保后续增量定时整理在 15~30 秒内秒级完成。您可在下方一键原样归档入库，或重置计数在下次增量时重新尝试刮削。",
+          emptyFallbackTitle: "暂无降级发布曲目",
+          emptyFallbackDesc: "所有成功入库的曲目均已精准匹配在线元数据或保留了完备标签。",
+          bannerNotice: "💡 <b>为什么会有熔断疑难曲目？</b><br/>极少数冷门歌曲、电台翻唱或原文件名乱码的音频，在线曲库无法检索到匹配歌词或元数据。系统已实施<b>最大 2 次重试熔断机制</b>并自动隔离，确保后续增量定时整理在 15~30 秒内秒级完成。您可在下方一键原样归档入库，或重置计数在下次增量时重新尝试刮削。",
+          fallbackBannerNotice: "💡 <b>未匹配标签降级发布说明：</b><br/>以下曲目在各大在线公共曲库中未能检索到高置信度的元数据（或源文件无足够标签信息）。系统恪守<b>安全第一、原音不漏</b>原则，已采用原始文件名规范归档至曲库的【未知艺术家】目录下，确保您可以直接正常点播。若需完善信息，您可使用 MusicTag、Mp3tag 等工具手动刮削补齐标签。",
           btnPublishAll: "🚀 全部原样安全归档入库",
           btnRetryAll: "🔄 重置计数全部重试",
           btnIgnoreAll: "⏸️ 永久保持隔离",
@@ -2481,7 +2487,10 @@
           colRetries: "重试",
           colReason: "隔离原因 / 错误详情",
           colAction: "操作",
-          actionPublishOne: "原样入库"
+          actionPublishOne: "原样入库",
+          colFallbackOutput: "曲库归档路径",
+          colFallbackSource: "源文件路径",
+          colFallbackTime: "发布时间"
         }
       },
       en: {
@@ -2524,10 +2533,11 @@
           cover: "Cover Coverage",
           version: "Version Groups",
           versionHint: "Preserved Live/Remaster variants",
-          failed: "Failed Items",
+          failed: "Exceptions & Issues",
           failedHint: "Corrupted or rejected files"
         },
         metricsHints: {
+          fallbackNotice: "Fallback Tagged",
           scannedParts: {
             newFiles: "New",
             modified: "Changed",
@@ -2819,12 +2829,17 @@
           emptyItems: "No files match the current filter"
         },
         unresolvedModal: {
-          title: "Unresolved Tracks & Isolation Management",
-          subtitle: "Circuit Breaker Protection · Eliminates infinite retries for sub-second incremental runs",
-          loading: "⏳ Loading unresolved tracks...",
+          title: "Exceptions, Issues & Fallback Publications",
+          subtitle: "Circuit Breaker Protection · Fallback Tagged Tracking · Fast Incremental Runs",
+          loading: "⏳ Loading list...",
+          tabUnresolved: "Isolated & Corrupted",
+          tabFallbacks: "Fallback Tagged Publications",
           emptyTitle: "🎉 No Unresolved Tracks!",
           emptyDesc: "All audio tracks have been successfully processed or published. Library is in top shape.",
-          bannerNotice: "💡 <b>Why are tracks unresolved?</b><br/>A few rare tracks, live covers, or corrupt files failed online scraping. The system isolated them with a <b>2-retry circuit breaker</b> so routine incremental runs finish in 15~30 seconds. You can safely fallback-publish them as-is, or reset retries to try again.",
+          emptyFallbackTitle: "No Fallback Publications",
+          emptyFallbackDesc: "All published tracks were matched with high-confidence metadata or preserved tags.",
+          bannerNotice: "💡 <b>Why are tracks isolated?</b><br/>A few rare tracks, live covers, or corrupt files failed online scraping. The system isolated them with a <b>2-retry circuit breaker</b> so routine incremental runs finish in 15~30 seconds. You can safely fallback-publish them as-is, or reset retries to try again.",
+          fallbackBannerNotice: "💡 <b>Fallback Tagged Notice:</b><br/>The following tracks could not be matched with high confidence against online databases. Adhering to our <b>safety-first</b> principle, they have been archived into the library under 'Unknown Artist' using original filenames. You can play them immediately, or use tools like Mp3tag to enrich tags later.",
           btnPublishAll: "🚀 Fallback Publish All As-Is",
           btnRetryAll: "🔄 Reset & Retry All",
           btnIgnoreAll: "⏸️ Keep Isolated",
@@ -2837,7 +2852,10 @@
           colRetries: "Retries",
           colReason: "Isolation Reason / Error Details",
           colAction: "Action",
-          actionPublishOne: "Publish As-Is"
+          actionPublishOne: "Publish As-Is",
+          colFallbackOutput: "Library Destination",
+          colFallbackSource: "Source File",
+          colFallbackTime: "Published Time"
         }
       }
     };
@@ -3463,7 +3481,23 @@
 
       const verTotal = m.possible_version_groups !== undefined ? m.possible_version_groups : (m.version_groups || 0);
       if (elVersion) elVersion.textContent = verTotal.toLocaleString();
-      if (elFailed) elFailed.textContent = (m.failed || 0).toLocaleString();
+      const unresGlobal = (typeof stateCache !== "undefined" && stateCache && stateCache.unresolvable_count !== undefined) ? stateCache.unresolvable_count : 0;
+      const runFailed = m.failed || 0;
+      const totalExceptions = unresGlobal + runFailed;
+      if (elFailed) elFailed.textContent = totalExceptions.toLocaleString();
+
+      const failedHint = document.getElementById("m-failed-hint");
+      if (failedHint) {
+        const fbCount = (typeof stateCache !== "undefined" && stateCache && stateCache.fallback_count !== undefined) ? stateCache.fallback_count : (m.fallback_published || 0);
+        const mH = I18N[currentLang].metricsHints;
+        if (fbCount > 0) {
+          failedHint.textContent = `${mH.fallbackNotice || (currentLang === 'zh' ? '未匹配标签' : 'Fallback')}: ${fbCount} · 点击处置`;
+        } else if (totalExceptions > 0) {
+          failedHint.textContent = `${currentLang === 'zh' ? '待处置疑难' : 'Pending'}: ${totalExceptions} · 点击查看`;
+        } else {
+          failedHint.textContent = I18N[currentLang].cards.failedHint || '损坏或拒绝文件: 0';
+        }
+      }
 
       // Dynamic sub-hints
       const scannedHint = document.getElementById("m-scanned-hint");
@@ -3493,8 +3527,8 @@
 
       const covHint = document.getElementById("m-cover-hint");
       if (covHint) {
-        const covEmbedded = (m.cover_art_embedded || 0).toLocaleString();
-        const covPresent = (m.cover_art_already_present || 0).toLocaleString();
+        const covEmbedded = (m.cover_embedded !== undefined ? m.cover_embedded : (m.cover_art_embedded || 0)).toLocaleString();
+        const covPresent = (m.cover_already_present !== undefined ? m.cover_already_present : (m.cover_art_already_present || 0)).toLocaleString();
         const mH = I18N[currentLang].metricsHints;
         covHint.textContent = `${mH.coverEmbedded}: ${covEmbedded} · ${mH.coverRetained}: ${covPresent}`;
       }
@@ -4099,9 +4133,16 @@
                     <div style="font-size:10.5px; color:var(--text-muted); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.source_path || "")}</div>
                   </td>
                   <td>${dispBadge}</td>
-                  <td title="${escapeHTML(it.output_path || "")}">
-                    <div style="word-break:break-all;">${escapeHTML(outBase)}</div>
-                    ${it.output_path ? `<div style="font-size:10.5px; color:var(--text-muted); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.output_path)}</div>` : ''}
+                  <td title="${escapeHTML(it.output_path || it.matched_target || "")}">
+                    ${it.output_path ? `
+                      <div style="word-break:break-all;">${escapeHTML(outBase)}</div>
+                      <div style="font-size:10.5px; color:var(--text-muted); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.output_path)}</div>
+                    ` : (it.matched_target ? `
+                      <div style="color:var(--warning); font-size:11.5px; word-break:break-all;">${currentLang === 'zh' ? '已在曲库存在同曲:' : 'Matched in library:'}</div>
+                      <div style="font-size:10.5px; color:var(--text-secondary); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.matched_target.split('/').pop() || it.matched_target)}</div>
+                    ` : `
+                      <div style="color:var(--text-muted); font-size:11.5px;">- (${currentLang === 'zh' ? '未产生新文件' : 'No new file'})</div>
+                    `)}
                   </td>
                   <td>${tagsCol || '-'}</td>
                   <td style="color:${it.error ? 'var(--danger)' : 'var(--text-muted)'}; font-size:11.5px; word-break:break-all;">
@@ -4118,9 +4159,11 @@
     // =========================================================================
     // Unresolved Tracks Modal & Action Handler
     // =========================================================================
-    let unresolvedListCache = [];
+    let unresolvedDataCache = { unresolved: [], fallbacks: [] };
+    let unresolvedCurrentTab = "unresolved";
 
-    async function openUnresolvedModal() {
+    async function openUnresolvedModal(prefTab) {
+      if (prefTab) unresolvedCurrentTab = prefTab;
       const modal = document.getElementById("unresolvedModal");
       const listEl = document.getElementById("unresolvedListContainer");
       if (!modal) return;
@@ -4128,8 +4171,31 @@
       document.body.style.overflow = "hidden";
       listEl.innerHTML = `<div style="text-align:center; padding: 40px; color: var(--text-muted);">${escapeHTML(t("unresolvedModal.loading"))}</div>`;
 
-      const items = await fetchJSON("/api/unresolved");
-      unresolvedListCache = items || [];
+      const res = await fetchJSON("/api/unresolved");
+      if (Array.isArray(res)) {
+        unresolvedDataCache = { unresolved: res, fallbacks: [] };
+      } else if (res && typeof res === "object") {
+        unresolvedDataCache = {
+          unresolved: Array.isArray(res.unresolved) ? res.unresolved : [],
+          fallbacks: Array.isArray(res.fallbacks) ? res.fallbacks : []
+        };
+      } else {
+        unresolvedDataCache = { unresolved: [], fallbacks: [] };
+      }
+
+      if (!prefTab) {
+        if (unresolvedDataCache.unresolved.length === 0 && unresolvedDataCache.fallbacks.length > 0) {
+          unresolvedCurrentTab = "fallbacks";
+        } else {
+          unresolvedCurrentTab = "unresolved";
+        }
+      }
+
+      renderUnresolvedView();
+    }
+
+    function switchUnresolvedTab(tab) {
+      unresolvedCurrentTab = tab;
       renderUnresolvedView();
     }
 
@@ -4159,8 +4225,15 @@
       const res = await postJSON("/api/unresolved/action", { action, path });
       if (res && res.ok) {
         alert(res.message || t("unresolvedModal.success"));
-        const items = await fetchJSON("/api/unresolved");
-        unresolvedListCache = items || [];
+        const data = await fetchJSON("/api/unresolved");
+        if (Array.isArray(data)) {
+          unresolvedDataCache = { unresolved: data, fallbacks: [] };
+        } else if (data && typeof data === "object") {
+          unresolvedDataCache = {
+            unresolved: Array.isArray(data.unresolved) ? data.unresolved : [],
+            fallbacks: Array.isArray(data.fallbacks) ? data.fallbacks : []
+          };
+        }
         renderUnresolvedView();
         updateDashboard();
       }
@@ -4171,74 +4244,142 @@
       const badgeEl = document.getElementById("unresolvedModalCountBadge");
       if (!listEl) return;
 
-      const count = (unresolvedListCache || []).length;
-      if (badgeEl) badgeEl.textContent = `${count} ${currentLang === 'zh' ? '首' : 'tracks'}`;
+      const unresolvedList = unresolvedDataCache.unresolved || [];
+      const fallbackList = unresolvedDataCache.fallbacks || [];
+      const totalCount = unresolvedList.length + fallbackList.length;
 
-      if (count === 0) {
-        listEl.innerHTML = `
-          <div style="text-align:center; padding:48px 20px;">
-            <div style="font-size:36px; margin-bottom:12px;">🎉</div>
-            <div style="font-size:16px; font-weight:700; margin-bottom:6px;">${escapeHTML(t("unresolvedModal.emptyTitle"))}</div>
-            <div style="font-size:13px; color:var(--text-muted);">${escapeHTML(t("unresolvedModal.emptyDesc"))}</div>
-          </div>
-        `;
-        return;
-      }
+      if (badgeEl) badgeEl.textContent = `${totalCount} ${currentLang === 'zh' ? '首' : 'tracks'}`;
 
-      listEl.innerHTML = `
-        <div style="background:var(--bg-subtle); border:1px solid var(--card-border); border-radius:var(--radius-sm); padding:12px 16px; font-size:13px; line-height:1.6; color:var(--text-secondary);">
-          ${t("unresolvedModal.bannerNotice")}
-        </div>
-
-        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-          <button type="button" class="btn-main" style="width:auto; padding:8px 16px; font-size:13px; background:var(--primary);" onclick="handleUnresolvedAction('fallback_publish_all')">
-            ${escapeHTML(t("unresolvedModal.btnPublishAll"))}
+      let tabNavHtml = `
+        <div class="filter-pills" style="margin-bottom: 4px; display: flex; gap: 8px;">
+          <button type="button" class="filter-pill ${unresolvedCurrentTab === 'unresolved' ? 'active' : ''}" onclick="switchUnresolvedTab('unresolved')">
+            ${escapeHTML(t("unresolvedModal.tabUnresolved"))} (${unresolvedList.length})
           </button>
-          <button type="button" class="btn-cancel" style="width:auto; padding:8px 16px; font-size:13px;" onclick="handleUnresolvedAction('retry_all')">
-            ${escapeHTML(t("unresolvedModal.btnRetryAll"))}
+          <button type="button" class="filter-pill ${unresolvedCurrentTab === 'fallbacks' ? 'active' : ''}" onclick="switchUnresolvedTab('fallbacks')">
+            ${escapeHTML(t("unresolvedModal.tabFallbacks"))} (${fallbackList.length})
           </button>
-          <button type="button" class="btn-cancel" style="width:auto; padding:8px 16px; font-size:13px;" onclick="handleUnresolvedAction('ignore_all')">
-            ${escapeHTML(t("unresolvedModal.btnIgnoreAll"))}
-          </button>
-        </div>
-
-        <div class="items-table-wrap">
-          <table class="items-table">
-            <thead>
-              <tr>
-                <th style="min-width:220px;">${escapeHTML(t("unresolvedModal.colFile"))}</th>
-                <th style="width:80px; text-align:center;">${escapeHTML(t("unresolvedModal.colRetries"))}</th>
-                <th style="min-width:220px;">${escapeHTML(t("unresolvedModal.colReason"))}</th>
-                <th style="width:110px; text-align:center;">${escapeHTML(t("unresolvedModal.colAction"))}</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${unresolvedListCache.map(it => {
-                const baseName = (it.source_path || "").split("/").pop() || it.source_path;
-                return `
-                  <tr>
-                    <td title="${escapeHTML(it.source_path || "")}">
-                      <div style="font-weight:600; word-break:break-all;">${escapeHTML(baseName)}</div>
-                      <div style="font-size:10.5px; color:var(--text-muted); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.source_path || "")}</div>
-                    </td>
-                    <td style="text-align:center;">
-                      <span class="badge-pill" style="background:var(--warning-glow); color:var(--warning); font-variant-numeric:tabular-nums;">${escapeHTML(String(it.retry_count || 0))}</span>
-                    </td>
-                    <td style="color:var(--danger); font-size:11.5px; word-break:break-all;">
-                      ${escapeHTML(it.retry_reason || "重试超限或未匹配到有效在线信息")}
-                    </td>
-                    <td style="text-align:center;">
-                      <button type="button" class="btn-link" onclick="handleUnresolvedAction('fallback_publish_one', '${escapeHTML(it.source_path || '').replace(/'/g, "\\'")}')">
-                        ${escapeHTML(t("unresolvedModal.actionPublishOne"))} &raquo;
-                      </button>
-                    </td>
-                  </tr>
-                `;
-              }).join("")}
-            </tbody>
-          </table>
         </div>
       `;
+
+      if (unresolvedCurrentTab === "unresolved") {
+        if (unresolvedList.length === 0) {
+          listEl.innerHTML = tabNavHtml + `
+            <div style="text-align:center; padding:48px 20px;">
+              <div style="font-size:36px; margin-bottom:12px;">🎉</div>
+              <div style="font-size:16px; font-weight:700; margin-bottom:6px;">${escapeHTML(t("unresolvedModal.emptyTitle"))}</div>
+              <div style="font-size:13px; color:var(--text-muted);">${escapeHTML(t("unresolvedModal.emptyDesc"))}</div>
+            </div>
+          `;
+          return;
+        }
+
+        listEl.innerHTML = tabNavHtml + `
+          <div style="background:var(--bg-subtle); border:1px solid var(--card-border); border-radius:var(--radius-sm); padding:12px 16px; font-size:13px; line-height:1.6; color:var(--text-secondary);">
+            ${t("unresolvedModal.bannerNotice")}
+          </div>
+
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn-main" style="width:auto; padding:8px 16px; font-size:13px; background:var(--primary);" onclick="handleUnresolvedAction('fallback_publish_all')">
+              ${escapeHTML(t("unresolvedModal.btnPublishAll"))}
+            </button>
+            <button type="button" class="btn-cancel" style="width:auto; padding:8px 16px; font-size:13px;" onclick="handleUnresolvedAction('retry_all')">
+              ${escapeHTML(t("unresolvedModal.btnRetryAll"))}
+            </button>
+            <button type="button" class="btn-cancel" style="width:auto; padding:8px 16px; font-size:13px;" onclick="handleUnresolvedAction('ignore_all')">
+              ${escapeHTML(t("unresolvedModal.btnIgnoreAll"))}
+            </button>
+          </div>
+
+          <div class="items-table-wrap">
+            <table class="items-table">
+              <thead>
+                <tr>
+                  <th style="min-width:220px;">${escapeHTML(t("unresolvedModal.colFile"))}</th>
+                  <th style="width:80px; text-align:center;">${escapeHTML(t("unresolvedModal.colRetries"))}</th>
+                  <th style="min-width:220px;">${escapeHTML(t("unresolvedModal.colReason"))}</th>
+                  <th style="width:110px; text-align:center;">${escapeHTML(t("unresolvedModal.colAction"))}</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${unresolvedList.map(it => {
+                  const baseName = (it.source_path || "").split("/").pop() || it.source_path;
+                  return `
+                    <tr>
+                      <td title="${escapeHTML(it.source_path || "")}">
+                        <div style="font-weight:600; word-break:break-all;">${escapeHTML(baseName)}</div>
+                        <div style="font-size:10.5px; color:var(--text-muted); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.source_path || "")}</div>
+                      </td>
+                      <td style="text-align:center;">
+                        <span class="badge-pill" style="background:var(--warning-glow); color:var(--warning); font-variant-numeric:tabular-nums;">${escapeHTML(String(it.retry_count || 0))}</span>
+                      </td>
+                      <td style="color:var(--danger); font-size:11.5px; word-break:break-all;">
+                        ${escapeHTML(it.retry_reason || (currentLang === 'zh' ? '重试超限或未匹配到有效在线信息' : 'Max retries reached / Scraping failed'))}
+                      </td>
+                      <td style="text-align:center;">
+                        <button type="button" class="btn-link" onclick="handleUnresolvedAction('fallback_publish_one', '${escapeHTML(it.source_path || '').replace(/'/g, "\\'")}')">
+                          ${escapeHTML(t("unresolvedModal.actionPublishOne"))} &raquo;
+                        </button>
+                      </td>
+                    </tr>
+                  `;
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } else {
+        // Fallbacks Tab
+        if (fallbackList.length === 0) {
+          listEl.innerHTML = tabNavHtml + `
+            <div style="text-align:center; padding:48px 20px;">
+              <div style="font-size:36px; margin-bottom:12px;">🎵</div>
+              <div style="font-size:16px; font-weight:700; margin-bottom:6px;">${escapeHTML(t("unresolvedModal.emptyFallbackTitle"))}</div>
+              <div style="font-size:13px; color:var(--text-muted);">${escapeHTML(t("unresolvedModal.emptyFallbackDesc"))}</div>
+            </div>
+          `;
+          return;
+        }
+
+        listEl.innerHTML = tabNavHtml + `
+          <div style="background:var(--bg-subtle); border:1px solid var(--card-border); border-radius:var(--radius-sm); padding:12px 16px; font-size:13px; line-height:1.6; color:var(--text-secondary);">
+            ${t("unresolvedModal.fallbackBannerNotice")}
+          </div>
+
+          <div class="items-table-wrap">
+            <table class="items-table">
+              <thead>
+                <tr>
+                  <th style="min-width:200px;">${escapeHTML(t("unresolvedModal.colFallbackSource"))}</th>
+                  <th style="min-width:240px;">${escapeHTML(t("unresolvedModal.colFallbackOutput"))}</th>
+                  <th style="width:140px; text-align:center;">${escapeHTML(t("unresolvedModal.colFallbackTime"))}</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${fallbackList.map(it => {
+                  const srcBase = (it.source_path || "").split("/").pop() || it.source_path;
+                  const outBase = (it.output_path || "").split("/").pop() || it.output_path;
+                  const timeStr = it.updated_at ? formatLocalTime(it.updated_at) : "-";
+                  return `
+                    <tr>
+                      <td title="${escapeHTML(it.source_path || "")}">
+                        <div style="font-weight:600; word-break:break-all;">${escapeHTML(srcBase)}</div>
+                        <div style="font-size:10.5px; color:var(--text-muted); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.source_path || "")}</div>
+                      </td>
+                      <td title="${escapeHTML(it.output_path || "")}">
+                        <div style="font-weight:500; color:var(--text-primary); word-break:break-all;">${escapeHTML(outBase)}</div>
+                        <div style="font-size:10.5px; color:var(--warning); font-family:monospace; margin-top:2px; word-break:break-all;">${escapeHTML(it.output_path || "")}</div>
+                      </td>
+                      <td style="text-align:center; font-size:11.5px; color:var(--text-muted); font-variant-numeric:tabular-nums;">
+                        ${escapeHTML(timeStr)}
+                      </td>
+                    </tr>
+                  `;
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
     }
 
     // Terminal Log Render

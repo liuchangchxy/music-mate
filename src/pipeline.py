@@ -2206,6 +2206,11 @@ def report(run_id: str) -> dict:
             return {str(row["key"]): int(row["value"]) for row in connection.execute(f"SELECT {column} AS key,count(*) AS value FROM items WHERE run_id=? GROUP BY {column}", (run_id,))}
         dispositions, metadata, lyrics, covers = counts("disposition"), counts("metadata_state"), counts("lyrics_state"), counts("cover_state")
         groups = {str(row["key"]): int(row["value"]) for row in connection.execute("SELECT decision AS key,count(*) AS value FROM groups WHERE run_id=? GROUP BY decision", (run_id,))}
+        fb_row = connection.execute(
+            "SELECT count(*) FROM items WHERE run_id=? AND disposition IN ('published', 'sample_validated') AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')",
+            (run_id,)
+        ).fetchone()
+        fallback_published = fb_row[0] if fb_row else 0
     finally:
         connection.close()
     metrics = {
@@ -2216,6 +2221,7 @@ def report(run_id: str) -> dict:
         "possible_version_groups": groups.get("keep_all_ambiguous", 0),
         "quality_upgraded": groups.get("quality_upgrade", 0),
         "failed": dispositions.get("failed", 0),
+        "fallback_published": fallback_published,
         "metadata_matched": metadata.get("metadata_matched", 0),
         "lyrics_embedded": lyrics.get("lyrics_embedded", 0),
         "lyrics_already_present": lyrics.get("lyrics_already_present", 0),
@@ -2225,8 +2231,20 @@ def report(run_id: str) -> dict:
         "cover_already_present": covers.get("cover_already_present", 0),
         "cover_total_with": covers.get("cover_already_present", 0) + covers.get("cover_embedded", 0),
         "cover_not_found": covers.get("cover_not_found", 0),
+        "new_files": 0,
+        "modified_files": 0,
+        "stale_decisions": 0,
+        "retry_files": 0,
+        "orphans_archived": 0,
         "state_bytes": directory_size(STATE),
         "temporary_audio_bytes": 0,
+        "acoustic_duplicates": dispositions.get("duplicate_same_recording", 0),
+        "exact_duplicates": dispositions.get("duplicate_exact", 0),
+        "scanned": sum(dispositions.values()),
+        "version_groups": groups.get("keep_all_ambiguous", 0),
+        "upgraded": groups.get("quality_upgrade", 0),
+        "cover_art_embedded": covers.get("cover_embedded", 0),
+        "cover_art_already_present": covers.get("cover_already_present", 0),
     }
     return {"run_id": run_id, "status": run["status"], "phase": {"name": run["phase"], "done": run["phase_done"], "total": run["phase_total"]}, "started_at": run["started_at"], "finished_at": run["finished_at"], "dispositions": dispositions, "metadata": metadata, "lyrics": lyrics, "covers": covers, "groups": groups, "metrics": metrics}
 

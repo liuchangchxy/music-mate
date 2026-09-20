@@ -414,14 +414,33 @@ def report(run_id: str | None = None) -> dict:
         cover_already_present = covers.get("cover_already_present", 0)
         cover_embedded = covers.get("cover_embedded", 0)
 
+        fb_row = db_conn.execute(
+            "SELECT count(*) FROM items WHERE run_id=? AND disposition IN ('published', 'sample_validated') AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')",
+            (target_run_id,)
+        ).fetchone()
+        fallback_published = fb_row[0] if fb_row else 0
+
+        upg_row = db_conn.execute("SELECT count(*) FROM groups WHERE run_id=? AND decision='quality_upgrade'", (target_run_id,)).fetchone()
+        quality_upgraded = upg_row[0] if upg_row else groups.get("quality_upgrade", 0)
+
+        cls_info = {}
+        if run["summary_json"] and run["summary_json"] != "{}":
+            try:
+                s_obj = json.loads(run["summary_json"])
+                if isinstance(s_obj, dict):
+                    cls_info = s_obj.get("classification") or s_obj.get("metrics") or {}
+            except Exception:
+                pass
+
         metrics = {
             "scanned_total": sum(dispositions.values()),
             "published": dispositions.get("published", 0),
             "exact_duplicate": dispositions.get("duplicate_exact", 0),
             "same_recording_duplicate": dispositions.get("duplicate_same_recording", 0),
             "possible_version_groups": groups.get("keep_all_ambiguous", 0),
-            "quality_upgraded": groups.get("quality_upgrade", 0),
+            "quality_upgraded": quality_upgraded,
             "failed": dispositions.get("failed", 0),
+            "fallback_published": fallback_published,
             "metadata_matched": metadata.get("metadata_matched", 0),
             "lyrics_embedded": lyrics_embedded,
             "lyrics_already_present": lyrics_already_present,
@@ -431,8 +450,20 @@ def report(run_id: str | None = None) -> dict:
             "cover_already_present": cover_already_present,
             "cover_total_with": cover_already_present + cover_embedded,
             "cover_not_found": covers.get("cover_not_found", 0),
+            "new_files": cls_info.get("new_files", 0),
+            "modified_files": cls_info.get("modified_files", 0),
+            "stale_decisions": cls_info.get("stale_decisions", 0),
+            "retry_files": cls_info.get("retry_files", 0),
+            "orphans_archived": cls_info.get("orphans_archived", 0),
             "state_bytes": state_size(),
             "temporary_audio_bytes": 0,
+            "acoustic_duplicates": dispositions.get("duplicate_same_recording", 0),
+            "exact_duplicates": dispositions.get("duplicate_exact", 0),
+            "scanned": sum(dispositions.values()),
+            "version_groups": groups.get("keep_all_ambiguous", 0),
+            "upgraded": quality_upgraded,
+            "cover_art_embedded": cover_embedded,
+            "cover_art_already_present": cover_already_present,
         }
         return {
             "run_id": target_run_id,
@@ -1016,8 +1047,11 @@ class Handler(BaseHTTPRequestHandler):
                 with connection() as db_conn:
                     unres_row = db_conn.execute("SELECT count(*) FROM source_inventory WHERE unresolvable=1 OR (disposition='failed' AND retry_count >= 2)").fetchone()
                     st["unresolvable_count"] = unres_row[0] if unres_row else 0
+                    fb_row = db_conn.execute("SELECT count(*) FROM source_inventory WHERE disposition='published' AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')").fetchone()
+                    st["fallback_count"] = fb_row[0] if fb_row else 0
             except Exception:
                 st["unresolvable_count"] = 0
+                st["fallback_count"] = 0
             self.send(200, json.dumps(st, ensure_ascii=False), "application/json")
         elif parsed.path == "/api/report":
             self.send(200, json.dumps(report(parse_qs(parsed.query).get("run_id", [None])[0]), ensure_ascii=False), "application/json")
@@ -1044,9 +1078,31 @@ class Handler(BaseHTTPRequestHandler):
                         "SELECT source_path, source_size, source_kind, disposition, output_path, metadata_state, lyrics_state, cover_state, error FROM items WHERE run_id=? ORDER BY id ASC LIMIT 500",
                         (run_id,)
                     ).fetchall()
+
+                    # Map duplicates to their matching winner/target
+                    group_rows = db_conn.execute("SELECT winner_source_path, paths_json FROM groups WHERE run_id=?", (run_id,)).fetchall()
+                    dup_map = {}
+                    for gr in group_rows:
+                        w = gr["winner_source_path"]
+                        try:
+                            paths = json.loads(gr["paths_json"])
+                            if isinstance(paths, list):
+                                for p in paths:
+                                    if p != w:
+                                        dup_map[p] = w
+                        except Exception:
+                            pass
+
+                    item_dicts = []
+                    for r in items:
+                        d = dict(r)
+                        if d["disposition"].startswith("duplicate_") and d["source_path"] in dup_map:
+                            d["matched_target"] = dup_map[d["source_path"]]
+                        item_dicts.append(d)
+
                     data = {
                         "run": dict(run_row),
-                        "items": [dict(r) for r in items]
+                        "items": item_dicts
                     }
                     if data["run"].get("summary_json"):
                         try:
@@ -1056,6 +1112,15 @@ class Handler(BaseHTTPRequestHandler):
                     summary = data["run"].get("summary") or {}
                     if not isinstance(summary, dict):
                         summary = {}
+
+                    upg_row = db_conn.execute("SELECT count(*) FROM groups WHERE run_id=? AND decision='quality_upgrade'", (run_id,)).fetchone()
+                    upg_count = upg_row[0] if upg_row else 0
+                    fb_row = db_conn.execute(
+                        "SELECT count(*) FROM items WHERE run_id=? AND disposition IN ('published', 'sample_validated') AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')",
+                        (run_id,)
+                    ).fetchone()
+                    fallback_count = fb_row[0] if fb_row else 0
+
                     if not summary.get("metrics"):
                         disp_counts = {}
                         for it in items:
@@ -1066,9 +1131,15 @@ class Handler(BaseHTTPRequestHandler):
                             "published": disp_counts.get("published", 0),
                             "exact_duplicate": disp_counts.get("duplicate_exact", 0),
                             "same_recording_duplicate": disp_counts.get("duplicate_same_recording", 0),
-                            "quality_upgraded": disp_counts.get("quality_upgrade", 0),
+                            "quality_upgraded": upg_count,
                             "failed": disp_counts.get("failed", 0),
+                            "fallback_published": fallback_count,
                         }
+                    else:
+                        summary["metrics"]["quality_upgraded"] = upg_count
+                        if "fallback_published" not in summary["metrics"]:
+                            summary["metrics"]["fallback_published"] = fallback_count
+
                     data["run"]["summary"] = summary
                     self.send(200, json.dumps(data, ensure_ascii=False), "application/json")
             except Exception as exc:
@@ -1076,10 +1147,16 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/unresolved":
             try:
                 with connection() as db_conn:
-                    rows = db_conn.execute(
+                    unresolved_rows = db_conn.execute(
                         "SELECT source_path, size_bytes, mtime_ns, disposition, output_path, retry_count, retry_reason, updated_at FROM source_inventory WHERE unresolvable=1 OR (disposition='failed' AND retry_count >= 2) ORDER BY updated_at DESC LIMIT 200"
                     ).fetchall()
-                    self.send(200, json.dumps([dict(r) for r in rows], ensure_ascii=False), "application/json")
+                    fallback_rows = db_conn.execute(
+                        "SELECT source_path, size_bytes, mtime_ns, disposition, output_path, retry_count, retry_reason, updated_at FROM source_inventory WHERE disposition='published' AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found') ORDER BY updated_at DESC LIMIT 200"
+                    ).fetchall()
+                    self.send(200, json.dumps({
+                        "unresolved": [dict(r) for r in unresolved_rows],
+                        "fallbacks": [dict(r) for r in fallback_rows],
+                    }, ensure_ascii=False), "application/json")
             except Exception as exc:
                 self.send(500, f"查询失败: {exc}", "text/plain; charset=utf-8")
         elif parsed.path == "/api/accessible-paths":

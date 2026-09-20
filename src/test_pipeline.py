@@ -1924,8 +1924,115 @@ class AppTests(unittest.TestCase):
                 self.assertNotIn(bad_song, buckets["retry"])
 
 
+    def test_frontend_backend_metrics_contract(self) -> None:
+        """Automated contract test ensuring all m.<field> references in dashboard.html exist in backend metrics dictionaries."""
+        import re
+        html_path = Path(__file__).parent / "dashboard.html"
+        self.assertTrue(html_path.is_file())
+        html_content = html_path.read_text(encoding="utf-8")
+        
+        # Extract all m.<identifier> usages in dashboard.html
+        frontend_keys = set(re.findall(r"\bm\.([a-zA-Z0-9_]+)", html_content))
+        self.assertGreater(len(frontend_keys), 10)
+
+        with tempfile.TemporaryDirectory() as d, patch.object(pipeline, "STATE", Path(d)), patch.object(pipeline, "LEDGER", Path(d) / "ledger-v6.sqlite"), patch.object(app, "STATE", Path(d)):
+            with pipeline.db() as conn:
+                conn.execute("INSERT INTO runs(id,mode,source_dir,output_dir,status,started_at,finished_at,phase,phase_done,phase_total) VALUES('contract_run','full','/s','/o','done',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'done',0,0)")
+                conn.commit()
+
+            pipe_rep = pipeline.report("contract_run")
+            pipe_metrics = pipe_rep.get("metrics", {})
+
+            with patch("app.state_size", return_value=0):
+                app_rep = app.report("contract_run")
+                app_metrics = app_rep.get("metrics", {})
+
+            for k in frontend_keys:
+                self.assertIn(
+                    k, pipe_metrics,
+                    f"Dead field detected! Frontend dashboard.html references 'm.{k}', but pipeline.report()['metrics'] does not provide it!"
+                )
+                self.assertIn(
+                    k, app_metrics,
+                    f"Dead field detected! Frontend dashboard.html references 'm.{k}', but app.report()['metrics'] does not provide it!"
+                )
+
+    def test_fallback_published_and_quality_upgrade_metrics(self) -> None:
+        """Verify report() correctly tallies quality_upgraded from groups decision and fallback_published."""
+        with tempfile.TemporaryDirectory() as d, patch.object(pipeline, "STATE", Path(d)), patch.object(pipeline, "LEDGER", Path(d) / "ledger-v6.sqlite"), patch.object(app, "STATE", Path(d)):
+            with pipeline.db() as conn:
+                conn.execute("INSERT INTO runs(id,mode,source_dir,output_dir,status,started_at,finished_at,phase,phase_done,phase_total) VALUES('r_test','incremental','/s','/o','done',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'done',0,0)")
+                # Normal published
+                conn.execute("INSERT INTO items(run_id,source_path,source_size,source_mtime_ns,duration,source_kind,disposition,output_path,metadata_state) VALUES('r_test','/s/normal.flac',100,1,100.0,'audio','published','/o/周杰伦/范特西/01 - 爱在西元前.flac','metadata_matched')")
+                # Fallback published (unknown artist)
+                conn.execute("INSERT INTO items(run_id,source_path,source_size,source_mtime_ns,duration,source_kind,disposition,output_path,metadata_state) VALUES('r_test','/s/rare.mp3',100,1,100.0,'audio','published','/o/未知艺术家/未知专辑/rare.mp3','metadata_not_found')")
+                # Quality upgrade group
+                conn.execute("INSERT INTO groups(id,run_id,tool,similarity,winner_source_path,decision,paths_json) VALUES('grp1','r_test','quality_upgrade',1.0,'/s/better.flac','quality_upgrade','{}')")
+                conn.commit()
+
+            pipe_rep = pipeline.report("r_test")
+            self.assertEqual(pipe_rep["metrics"]["published"], 2)
+            self.assertEqual(pipe_rep["metrics"]["fallback_published"], 1)
+            self.assertEqual(pipe_rep["metrics"]["quality_upgraded"], 1)
+
+            with patch("app.state_size", return_value=0):
+                app_rep = app.report("r_test")
+                self.assertEqual(app_rep["metrics"]["published"], 2)
+                self.assertEqual(app_rep["metrics"]["fallback_published"], 1)
+                self.assertEqual(app_rep["metrics"]["quality_upgraded"], 1)
+
+    def test_unresolved_and_matched_target_logic(self) -> None:
+        """Verify matched_target is populated for duplicate files and /api/unresolved returns both sets."""
+        with tempfile.TemporaryDirectory() as d, patch.object(pipeline, "STATE", Path(d)), patch.object(pipeline, "LEDGER", Path(d) / "ledger-v6.sqlite"), patch.object(app, "STATE", Path(d)):
+            with pipeline.db() as conn:
+                conn.execute("INSERT INTO runs(id,mode,source_dir,output_dir,status,started_at,finished_at,phase,phase_done,phase_total) VALUES('r_dup','incremental','/s','/o','done',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'done',0,0)")
+                # Normal target in output
+                conn.execute("INSERT INTO items(run_id,source_path,source_size,source_mtime_ns,duration,source_kind,disposition,output_path,audio_sha256) VALUES('r_dup','/s/first.flac',100,1,100.0,'audio','published','/o/Artist/Album/01.flac','hash_match')")
+                # Dedupe skipped file
+                conn.execute("INSERT INTO items(run_id,source_path,source_size,source_mtime_ns,duration,source_kind,disposition,output_path,audio_sha256) VALUES('r_dup','/s/dup.flac',100,1,100.0,'audio','duplicate_exact',NULL,'hash_match')")
+                # Source inventory entries
+                conn.execute("INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,unresolvable,retry_count,retry_reason) VALUES('/s/isolated.mp3',100,1,'h1','failed','',1,2,'Max retries')")
+                conn.execute("INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,unresolvable,retry_count,metadata_state) VALUES('/s/unknown.flac',100,1,'h2','published','/o/未知艺术家/未知专辑/unknown.flac',0,0,'metadata_not_found')")
+                conn.commit()
+
+            db_conn = app.connection()
+            try:
+                # 1. Test unresolved query
+                unresolved_rows = db_conn.execute(
+                    "SELECT source_path, disposition, retry_reason FROM source_inventory WHERE unresolvable=1 OR (disposition='failed' AND retry_count >= 2)"
+                ).fetchall()
+                self.assertEqual(len(unresolved_rows), 1)
+                self.assertEqual(unresolved_rows[0]["source_path"], "/s/isolated.mp3")
+
+                fallback_rows = db_conn.execute(
+                    "SELECT source_path, output_path FROM source_inventory WHERE disposition='published' AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')"
+                ).fetchall()
+                self.assertEqual(len(fallback_rows), 1)
+                self.assertEqual(fallback_rows[0]["source_path"], "/s/unknown.flac")
+
+                # 2. Test matched_target enrichment logic for duplicate items
+                items_rows = db_conn.execute(
+                    "SELECT id, run_id, source_path, disposition, output_path, audio_sha256 FROM items WHERE run_id='r_dup' ORDER BY id ASC"
+                ).fetchall()
+                items_list = [dict(r) for r in items_rows]
+                for item in items_list:
+                    if item.get("disposition") in ("duplicate_exact", "exact_dedupe", "duplicate_same_recording", "acoustic_dedupe") and not item.get("output_path"):
+                        target_row = db_conn.execute(
+                            "SELECT output_path FROM items WHERE audio_sha256=? AND output_path IS NOT NULL ORDER BY id DESC LIMIT 1",
+                            (item.get("audio_sha256"),)
+                        ).fetchone()
+                        if target_row and target_row["output_path"]:
+                            item["matched_target"] = target_row["output_path"]
+
+                dup_item = next(it for it in items_list if it["source_path"] == "/s/dup.flac")
+                self.assertEqual(dup_item["matched_target"], "/o/Artist/Album/01.flac")
+            finally:
+                db_conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
