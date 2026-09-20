@@ -11,10 +11,15 @@ import subprocess
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 try:
     os.umask(0)
@@ -26,6 +31,21 @@ CONFIG, STATUS, LOCK, LOG = STATE / "config.json", STATE / "status.json", STATE 
 PORT = int(os.environ.get("MUSIC_UI_PORT", "8091"))
 if Path("/appdata").is_dir():
     os.environ.setdefault("MUSIC_CACHE_DIR", "/appdata/cache")
+
+
+def get_local_now() -> datetime:
+    tz_env = os.environ.get("TZ", "Asia/Shanghai").strip()
+    if ZoneInfo:
+        try:
+            return datetime.now(ZoneInfo(tz_env)).replace(tzinfo=None)
+        except Exception:
+            pass
+    if any(k in tz_env.lower() for k in ("shanghai", "beijing", "cst", "asia/")):
+        try:
+            return datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
+        except Exception:
+            pass
+    return datetime.now()
 
 
 def read_json(path: Path, default: dict) -> dict:
@@ -522,7 +542,7 @@ def stop_pipeline() -> None:
     except Exception:
         pass
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = get_local_now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         with LOG.open("a", encoding="utf-8") as handle:
             handle.write(f"\n[{now_str}] 任务已手动停止。\n")
@@ -680,7 +700,7 @@ def start_mode(mode: str, lang: str = "zh") -> tuple[int, str]:
         return 409, get_error_message("invalid_stage", lang)
     if not take_lock():
         return 409, get_error_message("task_running", lang)
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = get_local_now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
         LOG.write_text(f"[{now_str}] 正在初始化并启动 [{mode}] 整理流水线...\n", encoding="utf-8")
@@ -709,7 +729,7 @@ def compute_next_run(
     interval_hours: int = 6,
     days: list[int] | None = None
 ) -> datetime:
-    now = from_dt or datetime.now()
+    now = from_dt or get_local_now()
     rule = str(rule or "daily").strip().lower()
 
     if anchor_time is None:
@@ -758,7 +778,7 @@ def compute_next_run(
 
 
 def get_schedule_preview(sched: dict, from_dt: datetime | None = None) -> dict:
-    now = from_dt or datetime.now()
+    now = from_dt or get_local_now()
     rule = str(sched.get("rule", "daily")).strip().lower()
     custom_time = str(sched.get("custom_time") or sched.get("time") or "03:00").strip()
     anchor_time = sched.get("anchor_time")
@@ -796,7 +816,7 @@ def get_schedule_preview(sched: dict, from_dt: datetime | None = None) -> dict:
 
 
 def check_and_trigger_schedule(now_dt: datetime | None = None) -> bool:
-    now = now_dt or datetime.now()
+    now = now_dt or get_local_now()
     cfg = read_json(CONFIG, {})
     sched = cfg.get("schedule")
     if not isinstance(sched, dict) or not sched.get("enabled"):
@@ -1305,7 +1325,7 @@ class Handler(BaseHTTPRequestHandler):
             sched["lang"] = lang
 
             if enabled:
-                preview = get_schedule_preview(sched, datetime.now())
+                preview = get_schedule_preview(sched, get_local_now())
                 sched["next_run"] = preview["next_run"]
                 sched["points"] = preview["points"]
             else:

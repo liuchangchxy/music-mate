@@ -74,7 +74,8 @@ ARCHIVE_DIRNAME = ".music-archive"
 # exactly which past decisions are stale instead of guessing from file timestamps.
 #   1 → 判定口径含 2 秒容差、Radio Edit 误互斥、镜像未装载国内源、WAV 标签被 INFO 遮蔽
 #   2 → 容差 4.5 秒、附注词归一、国内源(QQ Smartbox/网易云)真正启用、WAV 标签修复
-RULES_VERSION = 2
+#   3 → 真实 Chromaprint 声波指纹比对、两阶段提交品质升级、存量曲库 SQLite 账本纳管、统一熔断机制
+RULES_VERSION = 3
 NO_EMBED_LYRICS_FORMATS = {".wav", ".aiff", ".aif"}
 # Tracks that end up here were published without usable tags; the fnOS indexer
 # cannot file them, so they are re-enriched on the next run.
@@ -148,7 +149,31 @@ def assert_state_budget() -> None:
         raise RuntimeError(f"应用状态目录不得保存音频或图片：{forbidden[0]}")
     used = directory_size(STATE)
     if used > STATE_LIMIT:
-        raise RuntimeError(f"应用状态缓存超过上限：{used / 1024**2:.1f} MiB / {STATE_LIMIT / 1024**2:.0f} MiB")
+        log(f"[资源保护 / Maintenance] 状态目录使用量接近上限 ({used / 1024**2:.1f} MiB / {STATE_LIMIT / 1024**2:.0f} MiB)，正在执行自动压缩与维护...")
+        for db_file in [LEDGER, DUPSONIC_DB]:
+            if db_file.is_file():
+                try:
+                    c = sqlite3.connect(db_file, timeout=10)
+                    try:
+                        c.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                        c.execute("DELETE FROM events WHERE created_at < datetime('now', '-14 days');")
+                        c.commit()
+                        c.execute("VACUUM;")
+                    finally:
+                        c.close()
+                except Exception:
+                    pass
+        log_file = STATE / "rebuild.log"
+        if log_file.is_file() and log_file.stat().st_size > 10 * 1024 * 1024:
+            try:
+                content = log_file.read_text(encoding="utf-8", errors="replace")
+                lines = content.splitlines()
+                log_file.write_text("\n".join(lines[-3000:]) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+        used = directory_size(STATE)
+        if used > STATE_LIMIT:
+            raise RuntimeError(f"应用状态目录大小 ({used / 1024**2:.1f} MiB) 超过上限 ({STATE_LIMIT / 1024**2:.0f} MiB)")
 
 
 
@@ -303,6 +328,23 @@ def strip_riff_chunk(path: Path, chunk_id: bytes) -> bool:
                 size = struct.unpack("<I", chunk_header[4:])[0]
                 total_to_read = size + (size & 1)
                 if chunk_name == chunk_id:
+                    if chunk_id == b"LIST":
+                        sub_id = source.read(4)
+                        source.seek(-4, os.SEEK_CUR)
+                        if sub_id != b"INFO":
+                            # Preserve non-INFO LIST chunks (e.g. LIST-adtl cue markers)
+                            target.write(chunk_header)
+                            written += 8
+                            remaining = total_to_read
+                            while remaining > 0:
+                                read_len = min(remaining, 64 * 1024)
+                                chunk_buf = source.read(read_len)
+                                if not chunk_buf:
+                                    break
+                                target.write(chunk_buf)
+                                written += len(chunk_buf)
+                                remaining -= len(chunk_buf)
+                            continue
                     removed = True
                     source.seek(total_to_read, os.SEEK_CUR)
                     continue
@@ -418,9 +460,19 @@ def init_db(ledger_path: Path | None = None) -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_kb_artist_title ON knowledge_base(artist, title);
             """)
-            for col in ("metadata_state", "lyrics_state", "cover_state", "duration", "artist", "title", "retry_reason"):
+            for col in ("metadata_state", "lyrics_state", "cover_state", "duration", "artist", "title", "retry_reason", "fingerprint", "title_key"):
                 try:
                     conn.execute(f"ALTER TABLE source_inventory ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError:
+                    pass
+            for col in ("fingerprint",):
+                try:
+                    conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError:
+                    pass
+            for col in ("norm_stem",):
+                try:
+                    conn.execute(f"ALTER TABLE knowledge_base ADD COLUMN {col} TEXT")
                 except sqlite3.OperationalError:
                     pass
             for col in ("retry_count", "unresolvable"):
@@ -438,6 +490,8 @@ def init_db(ledger_path: Path | None = None) -> None:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_sha256 ON source_inventory(sha256)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_output ON source_inventory(output_path)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_unres ON source_inventory(unresolvable)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_title_key ON source_inventory(title_key)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_kb_norm_stem ON knowledge_base(norm_stem)")
             except sqlite3.OperationalError:
                 pass
             conn.commit()
@@ -456,7 +510,72 @@ def db() -> sqlite3.Connection:
     return connection
 
 
-def kb_get(connection: sqlite3.Connection, digest: str, artist: str = "", title: str = "") -> dict | None:
+def compute_chromaprint(path: Path) -> tuple[float, list[int]]:
+    """Compute Chromaprint uncompressed 32-bit integer array and duration using fpcalc."""
+    real_path = path.resolve(strict=False)
+    if not real_path.is_file():
+        return 0.0, []
+    try:
+        res = subprocess.run(["fpcalc", "-length", "120", "-raw", "-json", str(real_path)], capture_output=True, text=True, timeout=30)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            dur = float(data.get("duration", 0.0))
+            fp = [int(x) for x in data.get("fingerprint", [])]
+            return dur, fp
+    except Exception as exc:
+        log(f"[声纹 / Chromaprint] 计算异常 {path.name}: {exc}")
+    return 0.0, []
+
+
+def pack_fingerprint(fp: list[int]) -> str:
+    if not fp:
+        return ""
+    try:
+        import array, zlib, base64
+        return base64.b64encode(zlib.compress(array.array('I', fp).tobytes())).decode('ascii')
+    except Exception:
+        return ""
+
+
+def unpack_fingerprint(packed: str) -> list[int]:
+    if not packed:
+        return []
+    try:
+        import array, zlib, base64
+        return list(array.array('I', zlib.decompress(base64.b64decode(packed))))
+    except Exception:
+        return []
+
+
+def chromaprint_similarity(fp1: list[int], fp2: list[int]) -> float:
+    """Compute normalized bit-level cross-correlation similarity between two Chromaprints."""
+    if not fp1 or not fp2:
+        return 0.0
+    len1, len2 = len(fp1), len(fp2)
+    max_offset = min(40, max(len1, len2) // 4)
+    best_similarity = 0.0
+    for offset in range(-max_offset, max_offset + 1):
+        if offset >= 0:
+            sub1 = fp1[offset:]
+            sub2 = fp2
+        else:
+            sub1 = fp1
+            sub2 = fp2[-offset:]
+        match_len = min(len(sub1), len(sub2))
+        min_match = min(25, min(len1, len2))
+        if match_len < min_match:
+            continue
+        total_bits = match_len * 32
+        diff_bits = sum((sub1[i] ^ sub2[i]).bit_count() for i in range(match_len))
+        similarity = 1.0 - (diff_bits / total_bits)
+        if similarity > best_similarity:
+            best_similarity = similarity
+            if best_similarity >= 0.98:
+                break
+    return best_similarity
+
+
+def kb_get(connection: sqlite3.Connection, digest: str, artist: str = "", title: str = "", norm_stem: str = "") -> dict | None:
     if digest:
         row = connection.execute("SELECT * FROM knowledge_base WHERE audio_sha256=?", (digest,)).fetchone()
         if row:
@@ -465,16 +584,20 @@ def kb_get(connection: sqlite3.Connection, digest: str, artist: str = "", title:
         row = connection.execute("SELECT * FROM knowledge_base WHERE artist=? AND title=? AND lyrics IS NOT NULL AND lyrics != '' LIMIT 1", (artist, title)).fetchone()
         if row:
             return dict(row)
+    if norm_stem:
+        row = connection.execute("SELECT * FROM knowledge_base WHERE norm_stem=? AND lyrics IS NOT NULL AND lyrics != '' LIMIT 1", (norm_stem,)).fetchone()
+        if row:
+            return dict(row)
     return None
 
 
-def kb_put(connection: sqlite3.Connection, digest: str, artist: str, album: str, title: str, track_number: str = "", year: int | None = None, lyrics: str | None = None, has_cover: bool = False) -> None:
+def kb_put(connection: sqlite3.Connection, digest: str, artist: str, album: str, title: str, track_number: str = "", year: int | None = None, lyrics: str | None = None, has_cover: bool = False, norm_stem: str = "") -> None:
     if not digest or not title:
         return
     with DB_WRITE_LOCK:
         connection.execute("""
-        INSERT INTO knowledge_base(audio_sha256, artist, album, title, track_number, year, lyrics, has_cover, updated_at)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO knowledge_base(audio_sha256, artist, album, title, track_number, year, lyrics, has_cover, norm_stem, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(audio_sha256) DO UPDATE SET
             artist=CASE WHEN excluded.artist != '' THEN excluded.artist ELSE knowledge_base.artist END,
             album=CASE WHEN excluded.album != '' THEN excluded.album ELSE knowledge_base.album END,
@@ -483,8 +606,9 @@ def kb_put(connection: sqlite3.Connection, digest: str, artist: str, album: str,
             year=COALESCE(excluded.year, knowledge_base.year),
             lyrics=COALESCE(excluded.lyrics, knowledge_base.lyrics),
             has_cover=MAX(knowledge_base.has_cover, excluded.has_cover),
+            norm_stem=COALESCE(excluded.norm_stem, knowledge_base.norm_stem),
             updated_at=CURRENT_TIMESTAMP
-        """, (digest, artist or "", album or "", title, track_number or "", year, lyrics, 1 if has_cover else 0))
+        """, (digest, artist or "", album or "", title, track_number or "", year, lyrics, 1 if has_cover else 0, norm_stem or None))
         try:
             connection.commit()
         except Exception:
@@ -741,41 +865,38 @@ def exact_dedupe(run_id: str, source: Path, candidates: set[Path], library: Path
         update_phase(run_id, "exact_dedupe", 1, 1, "完全相同文件去重完成")
         return candidates
 
-    is_incremental = run_id.startswith("incremental-")
-    # For incremental runs with library present, avoid full-disk jdupes traversal.
-    # Instead, match candidate digests against the SQLite ledger in O(1) time.
-    if is_incremental and library and library.exists():
-        connection = db()
-        rev_map: dict[str, Path] = {}
-        if decoded_map:
-            for orig, dec in decoded_map.items():
-                rev_map[str(dec)] = orig
-                rev_map[str(dec.resolve())] = orig
+    connection = db()
+    rev_map: dict[str, Path] = {}
+    if decoded_map:
+        for orig, dec in decoded_map.items():
+            rev_map[str(dec)] = orig
+            rev_map[str(dec.resolve())] = orig
 
-        # 1. Intra-candidate deduplication by sha256
-        seen_hashes: dict[str, Path] = {}
-        to_discard = []
-        for p in sorted(candidates, key=lambda value: str(value).casefold()):
-            real_p = decoded_map.get(p, p) if decoded_map else p
-            if not real_p.is_file():
-                continue
-            h = sha256(real_p)
-            if h in seen_hashes:
-                winner = seen_hashes[h]
-                to_discard.append((p, winner, h))
-            else:
-                seen_hashes[h] = p
+    # 1. Intra-candidate deduplication by sha256
+    seen_hashes: dict[str, Path] = {}
+    to_discard = []
+    for p in sorted(candidates, key=lambda value: str(value).casefold()):
+        real_p = decoded_map.get(p, p) if decoded_map else p
+        if not real_p.is_file():
+            continue
+        h = sha256(real_p)
+        if h in seen_hashes:
+            winner = seen_hashes[h]
+            to_discard.append((p, winner, h))
+        else:
+            seen_hashes[h] = p
 
-        for p, winner, h in to_discard:
-            candidates.discard(p)
-            mark(connection, run_id, p, "duplicate_exact")
-            group_id = f"exact-{h}"
-            connection.execute(
-                "INSERT OR REPLACE INTO groups(id,run_id,tool,similarity,winner_source_path,decision,paths_json) VALUES(?,?,?,?,?,?,?)",
-                (group_id, run_id, "indexed_sha256", 1.0, str(winner), "keep", json.dumps([str(winner), str(p)], ensure_ascii=False))
-            )
+    for p, winner, h in to_discard:
+        candidates.discard(p)
+        mark(connection, run_id, p, "duplicate_exact")
+        group_id = f"exact-{h}"
+        connection.execute(
+            "INSERT OR REPLACE INTO groups(id,run_id,tool,similarity,winner_source_path,decision,paths_json) VALUES(?,?,?,?,?,?,?)",
+            (group_id, run_id, "indexed_sha256", 1.0, str(winner), "keep", json.dumps([str(winner), str(p)], ensure_ascii=False))
+        )
 
-        # 2. Candidate vs Library deduplication using SQLite source_inventory index
+    # 2. Candidate vs Library deduplication using SQLite source_inventory index
+    if library and library.exists():
         for p in list(candidates):
             real_p = decoded_map.get(p, p) if decoded_map else p
             if not real_p.is_file():
@@ -796,57 +917,9 @@ def exact_dedupe(run_id: str, source: Path, candidates: set[Path], library: Path
                         (group_id, run_id, "indexed_sha256", 1.0, str(out_p), "keep", json.dumps([str(out_p), str(p)], ensure_ascii=False))
                     )
 
-        connection.commit()
-        connection.close()
-        update_phase(run_id, "exact_dedupe", 1, 1, "完全相同文件去重完成 (基于索引快速比对)")
-        return candidates
-
-    roots = [source] + ([library] if library and library.exists() else [])
-    if run_root and (run_root / "ncm").is_dir():
-        roots.append(run_root / "ncm")
-    result = command(["jdupes", "-r", "-j", "-q", *map(str, roots)], accepted=(0, 1))
-    try:
-        groups = json.loads(result.stdout or "{}").get("matchSets", [])
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("jdupes returned invalid JSON") from exc
-    connection = db()
-    rev_map: dict[str, Path] = {}
-    if decoded_map:
-        for orig, dec in decoded_map.items():
-            rev_map[str(dec)] = orig
-            rev_map[str(dec.resolve())] = orig
-
-    for payload in groups:
-        raw_paths = [Path(item.get("filePath", "")) for item in payload.get("fileList", []) if isinstance(item, dict)]
-        paths = [rev_map.get(str(p), rev_map.get(str(p.resolve()), p)) for p in raw_paths]
-        if library:
-            paths = [p for p in paths if not hidden_under(p, library)]
-        own = [p for p in paths if p in candidates]
-        if not own or len(paths) < 2:
-            continue
-        external = [p for p in paths if p not in candidates]
-        # In incremental retry mode, candidates may match their own previously published library copy.
-        # Filter out external paths that are owned by a candidate in this very group.
-        effective_external = []
-        for ext_p in external:
-            owner_src = recorded_source_for(ext_p)
-            if owner_src and owner_src in own:
-                continue
-            effective_external.append(ext_p)
-        winner = effective_external[0] if effective_external else sorted(own, key=lambda value: str(value).casefold())[0]
-        group_id = f"exact-{sha256(winner)}" if winner.is_file() else f"exact-{uuid.uuid4().hex}"
-        connection.execute("INSERT OR REPLACE INTO groups(id,run_id,tool,similarity,winner_source_path,decision,paths_json) VALUES(?,?,?,?,?,?,?)", (group_id, run_id, "jdupes", 1.0, str(winner), "keep", json.dumps([str(p) for p in paths], ensure_ascii=False)))
-        for p in own:
-            if p != winner:
-                # Only discard/mark duplicate if winner is a genuinely distinct source/library item
-                winner_owner = recorded_source_for(winner)
-                if winner_owner and winner_owner == p:
-                    continue
-                candidates.discard(p)
-                mark(connection, run_id, p, "duplicate_exact")
     connection.commit()
     connection.close()
-    update_phase(run_id, "exact_dedupe", 1, 1, "完全相同文件去重完成")
+    update_phase(run_id, "exact_dedupe", 1, 1, "完全相同文件去重完成 (基于账本索引快速比对)")
     return candidates
 
 
@@ -1023,7 +1096,7 @@ def apply_quality_upgrade(winner: Path, sub_group: list[Path], own: list[Path], 
     archived = [str(path) for path in (archive_superseded(path, output, connection) for path in superseded) if path]
     detail = json.dumps({"winner": str(winner), "superseded": [str(p) for p in superseded], "archived": archived}, ensure_ascii=False)
     for path in superseded:
-        log(f"[品质升级 / Upgrade] 库中 {path.name} ({path.suffix}) 已被更优版本 {winner.name} ({winner.suffix}) 取代，移入 {ARCHIVE_DIRNAME}")
+        log(f"[品质升级 / Upgrade] 库中 {path.name} ({path.suffix}) 将被更优版本 {winner.name} ({winner.suffix}) 取代，移入 {ARCHIVE_DIRNAME}")
     connection.execute(
         "INSERT OR REPLACE INTO groups(id,run_id,tool,similarity,winner_source_path,decision,paths_json) VALUES(?,?,?,?,?,?,?)",
         (group_id, run_id, "quality_upgrade", 1.0, str(winner), "quality_upgrade", detail),
@@ -1100,13 +1173,17 @@ def acoustic_dedupe(run_id: str, source: Path, candidates: set[Path], library: P
         update_phase(run_id, "acoustic_dedupe", 1, 1, "跨格式同录音识别完成")
         return candidates
 
-    # Hierarchical Candidate Blocking (O(N) fast indexing)
+    # Hierarchical Candidate Blocking + Chromaprint Waveform Fingerprinting
     connection = db()
-    dur_rows = connection.execute("SELECT source_path, duration FROM items WHERE run_id=?", (run_id,)).fetchall()
+    dur_rows = connection.execute("SELECT source_path, duration, fingerprint FROM items WHERE run_id=?", (run_id,)).fetchall()
     durations: dict[str, float] = {row["source_path"]: float(row["duration"] or 0) for row in dur_rows}
+    fingerprint_cache: dict[str, list[int]] = {}
+    for row in dur_rows:
+        if row["fingerprint"]:
+            unp = unpack_fingerprint(row["fingerprint"])
+            if unp:
+                fingerprint_cache[row["source_path"]] = unp
 
-    is_incremental = run_id.startswith("incremental-")
-    library_files: list[Path] = []
     file_metadata: dict[str, tuple[str, str]] = {}
     buckets: dict[str, list[Path]] = {}
 
@@ -1133,63 +1210,37 @@ def acoustic_dedupe(run_id: str, source: Path, candidates: set[Path], library: P
         cand_title_keys.add(title_key)
         buckets.setdefault(title_key, []).append(p)
 
-    # 2. Query library files
+    # 2. Query library files exclusively via SQLite ledger (Zero full-disk rglob / Zero sequential ffprobe)
     if library and library.exists():
-        if is_incremental:
-            # Fast-path: query existing published items from SQLite without disk traversal
-            inv_rows = connection.execute(
-                "SELECT output_path, duration, COALESCE(artist, ''), COALESCE(title, '') FROM source_inventory WHERE output_path IS NOT NULL AND disposition='published'"
-            ).fetchall()
-            for row in inv_rows:
-                out_str = row["output_path"]
-                if not out_str:
-                    continue
-                out_p = Path(out_str)
-                dur = float(row["duration"] or 0)
-                art, tit = row[2], row[3]
+        inv_rows = connection.execute(
+            "SELECT output_path, duration, COALESCE(artist, ''), COALESCE(title, ''), COALESCE(fingerprint, ''), COALESCE(title_key, '') "
+            "FROM source_inventory WHERE output_path IS NOT NULL AND disposition='published'"
+        ).fetchall()
+        for row in inv_rows:
+            out_str = row[0]
+            if not out_str:
+                continue
+            out_p = Path(out_str)
+            dur = float(row[1] or 0)
+            art, tit = row[2], row[3]
+            fp_packed = row[4]
+            title_key = row[5]
+            if not title_key:
                 if not tit:
                     art, tit = extract_artist_and_title(out_p.stem)
                 title_key = re.sub(r"[^\w\u4e00-\u9fff]", "", simplify_chinese(tit).casefold()) or tit.casefold() or out_p.stem.casefold()
-                # Only include library tracks that could potentially collide with candidates
-                if title_key in cand_title_keys:
-                    if out_p.is_file():
-                        durations[str(out_p)] = dur
-                        file_metadata[str(out_p)] = (art, tit)
-                        buckets.setdefault(title_key, []).append(out_p)
-        else:
-            # Full/Sample mode: disk discovery
-            inv_rows = connection.execute("SELECT output_path, duration FROM source_inventory WHERE output_path IS NOT NULL").fetchall()
-            for row in inv_rows:
-                if row["output_path"] and row["duration"]:
-                    durations[row["output_path"]] = float(row["duration"])
-            try:
-                for p in library.rglob("*"):
-                    if p.is_file() and media(p) and not p.name.startswith(".") and not hidden_under(p, library):
-                        library_files.append(p)
-                        if str(p) not in durations:
-                            try:
-                                d, _, _, _ = probe(p)
-                                durations[str(p)] = d
-                            except Exception:
-                                pass
-            except OSError:
-                pass
-            for p in library_files:
-                stem_art, stem_tit = extract_artist_and_title(p.stem)
-                tag_art, tag_tit = "", ""
-                if p.is_file():
-                    try:
-                        _, _, tags, _ = probe(p)
-                        tag_art = tags.get("artist") or tags.get("album_artist", "")
-                        tag_tit = tags.get("title", "")
-                    except Exception:
-                        pass
-                final_art = tag_art or stem_art
-                final_tit = tag_tit or stem_tit or p.stem
-                file_metadata[str(p)] = (final_art, final_tit)
-                title_key = re.sub(r"[^\w\u4e00-\u9fff]", "", simplify_chinese(final_tit).casefold()) or final_tit.casefold() or p.stem.casefold()
-                buckets.setdefault(title_key, []).append(p)
+            # Only include library tracks that could potentially collide with candidates
+            if title_key in cand_title_keys:
+                if out_p.is_file():
+                    durations[str(out_p)] = dur
+                    file_metadata[str(out_p)] = (art, tit)
+                    if fp_packed and str(out_p) not in fingerprint_cache:
+                        unp = unpack_fingerprint(fp_packed)
+                        if unp:
+                            fingerprint_cache[str(out_p)] = unp
+                    buckets.setdefault(title_key, []).append(out_p)
 
+    # 3. Clustering with Chromaprint Acoustic Verification
     for key, group in buckets.items():
         if len(group) < 2:
             continue
@@ -1204,9 +1255,36 @@ def acoustic_dedupe(run_id: str, source: Path, candidates: set[Path], library: P
                 for c in cluster:
                     c_dur = durations.get(str(c), 0.0)
                     c_art, _ = file_metadata.get(str(c), (extract_artist_and_title(c.stem)[0], ""))
+                    # Physical duration gatekeeper and artist compatibility check
                     if (p_dur > 0 and c_dur > 0 and abs(p_dur - c_dur) > SAFE_DURATION) or not artists_compatible(p_art, c_art):
                         can_join = False
                         break
+
+                    # Chromaprint Acoustic Fingerprint Confirmation
+                    dur_diff = abs(p_dur - c_dur) if (p_dur > 0 and c_dur > 0) else 0.0
+                    if can_join and dur_diff > 0.4:
+                        fp_p = fingerprint_cache.get(str(p))
+                        if fp_p is None:
+                            real_p = decoded_map.get(p, p) if decoded_map else p
+                            _, fp_p = compute_chromaprint(real_p)
+                            fingerprint_cache[str(p)] = fp_p
+                            if fp_p:
+                                packed = pack_fingerprint(fp_p)
+                                connection.execute("UPDATE items SET fingerprint=? WHERE run_id=? AND source_path=?", (packed, run_id, str(p)))
+                        fp_c = fingerprint_cache.get(str(c))
+                        if fp_c is None:
+                            real_c = decoded_map.get(c, c) if decoded_map else c
+                            _, fp_c = compute_chromaprint(real_c)
+                            fingerprint_cache[str(c)] = fp_c
+                            if fp_c:
+                                packed = pack_fingerprint(fp_c)
+                                connection.execute("UPDATE items SET fingerprint=? WHERE run_id=? AND source_path=?", (packed, run_id, str(c)))
+                        if fp_p and fp_c:
+                            sim = chromaprint_similarity(fp_p, fp_c)
+                            if sim < 0.72:
+                                # Dissimilar waveforms: genuine different recordings
+                                can_join = False
+                                break
                 if can_join:
                     cluster.append(p)
                     placed = True
@@ -1229,7 +1307,7 @@ def acoustic_dedupe(run_id: str, source: Path, candidates: set[Path], library: P
 
             if is_safe_duration and (is_safe_variant or is_near_identical):
                 winner = max(sub_group, key=lambda p: audio_quality_score(p, decoded_map))
-                # P5: Smart Quality Upgrade — a better new arrival replaces the library copy
+                # Two-Phase Staged Quality Upgrade
                 winner = apply_quality_upgrade(winner, sub_group, own, library, candidates, decoded_map, connection, run_id)
                 group_id = f"blocking-{path_key(winner)}" if winner.is_file() else f"blocking-{uuid.uuid4().hex}"
                 connection.execute(
@@ -1340,14 +1418,15 @@ def enrich(temporary: Path, run_root: Path, digest: str | None = None, source_st
     before_tags, before_art = probe(temporary)[2:]
     before_lyrics = any((k.startswith("lyrics") or k in ("unsyncedlyrics", "uslt")) and bool(v.strip()) for k, v in before_tags.items())
     original_complete = bool(before_tags.get("title") and (before_tags.get("artist") or before_tags.get("album_artist")))
+    clean_stem = normalize_track_stem(source_stem or temporary.stem)
     if original_complete and before_lyrics and before_art:
         with db() as conn:
-            kb_put(conn, digest, before_tags.get("artist") or before_tags.get("album_artist", ""), before_tags.get("album", ""), before_tags.get("title", ""), before_tags.get("track", ""), None, before_tags.get("lyrics", ""), True)
+            kb_put(conn, digest, before_tags.get("artist") or before_tags.get("album_artist", ""), before_tags.get("album", ""), before_tags.get("title", ""), before_tags.get("track", ""), None, before_tags.get("lyrics", ""), True, norm_stem=clean_stem)
         return "existing_tags", "lyrics_already_present", "cover_already_present"
 
     # Try local Knowledge Base (0ms network)
     with db() as conn:
-        kb_entry = kb_get(conn, digest, before_tags.get("artist", ""), before_tags.get("title", ""))
+        kb_entry = kb_get(conn, digest, before_tags.get("artist", ""), before_tags.get("title", ""), norm_stem=clean_stem)
 
     if kb_entry and kb_entry.get("lyrics") and mediafile is not None:
         try:
@@ -1432,7 +1511,7 @@ def enrich(temporary: Path, run_root: Path, digest: str | None = None, source_st
                 lrc_val = cur_tags.get("lyrics") or cur_tags.get("unsyncedlyrics") or cur_tags.get("uslt") or dom_lyrics or ""
                 trk_val = cur_tags.get("track") or cur_tags.get("tracknumber", "")
                 with db() as conn:
-                    kb_put(conn, digest, art_val, alb_val, tit_val, trk_val, None, lrc_val, True)
+                    kb_put(conn, digest, art_val, alb_val, tit_val, trk_val, None, lrc_val, True, norm_stem=clean_stem)
                 meta_st = "existing_tags" if original_complete else "metadata_matched"
                 lrc_st = "lyrics_already_present" if before_lyrics else "lyrics_embedded"
                 cov_st = "cover_already_present" if before_art else "cover_embedded"
@@ -1559,7 +1638,7 @@ def enrich(temporary: Path, run_root: Path, digest: str | None = None, source_st
         trk_val = after_tags.get("track") or after_tags.get("tracknumber", "")
         if tit_val:
             with db() as conn:
-                kb_put(conn, digest, art_val, alb_val, tit_val, trk_val, None, lrc_val, bool(after_art or before_art))
+                kb_put(conn, digest, art_val, alb_val, tit_val, trk_val, None, lrc_val, bool(after_art or before_art), norm_stem=clean_stem)
     except Exception:
         pass
 
@@ -2017,7 +2096,7 @@ def output_is_clean(output: Path) -> bool:
 
 def persist_inventory(run_id: str) -> None:
     with db() as connection:
-        rows = connection.execute("SELECT source_path,source_size,source_mtime_ns,source_sha256,disposition,output_path FROM items WHERE run_id=? AND source_sha256 IS NOT NULL", (run_id,)).fetchall()
+        rows = connection.execute("SELECT source_path,source_size,source_mtime_ns,source_sha256,duration,fingerprint,disposition,output_path FROM items WHERE run_id=? AND source_sha256 IS NOT NULL", (run_id,)).fetchall()
         for row in rows:
             # If an existing source is already marked 'published' with an existing file on disk,
             # do not overwrite its disposition to 'duplicate_*' during incremental retries.
@@ -2026,14 +2105,32 @@ def persist_inventory(run_id: str) -> None:
                 out_p = Path(prev["output_path"]) if prev["output_path"] else None
                 if out_p and out_p.is_file():
                     continue
-            connection.execute("INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,rules_version) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET size_bytes=excluded.size_bytes,mtime_ns=excluded.mtime_ns,sha256=excluded.sha256,disposition=excluded.disposition,output_path=excluded.output_path,rules_version=excluded.rules_version,updated_at=CURRENT_TIMESTAMP", (row["source_path"], row["source_size"], row["source_mtime_ns"], row["source_sha256"], row["disposition"], row["output_path"], RULES_VERSION))
+            out_str = row["output_path"]
+            art, tit = "", ""
+            title_key = ""
+            if out_str:
+                out_p = Path(out_str)
+                art = out_p.parent.parent.name if out_p.parent.parent.name else ""
+                tit = out_p.stem
+                title_key = re.sub(r"[^\w\u4e00-\u9fff]", "", simplify_chinese(tit).casefold()) or tit.casefold()
+            connection.execute(
+                "INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,duration,artist,title,fingerprint,title_key,rules_version) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET "
+                "size_bytes=excluded.size_bytes,mtime_ns=excluded.mtime_ns,sha256=excluded.sha256,disposition=excluded.disposition,"
+                "output_path=excluded.output_path,duration=COALESCE(excluded.duration, source_inventory.duration),"
+                "artist=COALESCE(excluded.artist, source_inventory.artist),title=COALESCE(excluded.title, source_inventory.title),"
+                "fingerprint=COALESCE(excluded.fingerprint, source_inventory.fingerprint),title_key=COALESCE(excluded.title_key, source_inventory.title_key),"
+                "rules_version=excluded.rules_version,updated_at=CURRENT_TIMESTAMP",
+                (row["source_path"], row["source_size"], row["source_mtime_ns"], row["source_sha256"], row["disposition"], row["output_path"],
+                 row["duration"], art, tit, row["fingerprint"], title_key, RULES_VERSION)
+            )
     assert_state_budget()
 
 
 CONFLICT_COPY_RE = re.compile(r" \(\d+\)$")
 
 
-def sweep_orphan_conflict_copies(output: Path, connection: sqlite3.Connection) -> int:
+def sweep_orphan_conflict_copies(output: Path, connection: sqlite3.Connection, target_dirs: set[Path] | None = None) -> int:
     """归档历史上分叉出来的「名 (2).ext」孤儿副本。
 
     旧发布逻辑在"同一逻辑曲目重发但字节不同"时会新开 (2) 而不是替换，账本里又没有任何
@@ -2041,9 +2138,23 @@ def sweep_orphan_conflict_copies(output: Path, connection: sqlite3.Connection) -
     只认「本名文件在账本里有主、而 (N) 副本无人认领」这一种组合，其它一律不碰。
     """
     archived = 0
-    for path in output.rglob("*"):
-        if not path.is_file() or not media(path) or path.name.startswith(".") or hidden_under(path, output):
-            continue
+    candidate_files: list[Path] = []
+    if target_dirs is not None:
+        for d in target_dirs:
+            if d.is_dir():
+                try:
+                    for p in d.iterdir():
+                        if p.is_file() and media(p) and not p.name.startswith("."):
+                            candidate_files.append(p)
+                except OSError:
+                    pass
+    else:
+        try:
+            candidate_files = [p for p in output.rglob("*") if p.is_file() and media(p) and not p.name.startswith(".") and not hidden_under(p, output)]
+        except OSError:
+            pass
+
+    for path in candidate_files:
         if not CONFLICT_COPY_RE.search(path.stem):
             continue
         base = path.with_name(f"{CONFLICT_COPY_RE.sub('', path.stem)}{path.suffix}")
@@ -2141,9 +2252,7 @@ def run_batch(mode: str, source: Path, output: Path, paths: list[Path], real: bo
         ordered = sorted(candidates, key=lambda value: str(value).casefold())
         kept_candidates = set(ordered)
         orphans_archived = 0
-        if real:
-            with db() as sweep_connection:
-                orphans_archived = sweep_orphan_conflict_copies(output, sweep_connection)
+        published_dirs: set[Path] = set()
         pool_workers = metadata_workers()
         cores = workers()
         update_phase(run_id, "publish", 0, len(ordered), f"正在并发处理并发布 0/{len(ordered)} 个最终文件 (自适应线程: {pool_workers}，基于系统 {cores} 核)")
@@ -2163,15 +2272,55 @@ def run_batch(mode: str, source: Path, output: Path, paths: list[Path], real: bo
                 if exc:
                     connection.execute("UPDATE items SET disposition='failed',error=? WHERE run_id=? AND source_path=?", (repr(exc), run_id, str(path)))
                     event(connection, run_id, "publish", "failed", path, repr(exc))
+                    try:
+                        st = path.stat()
+                        connection.execute(
+                            "INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,retry_count,unresolvable,retry_reason,rules_version) "
+                            "VALUES(?,?,?,?,'failed',1,0,?,?) ON CONFLICT(source_path) DO UPDATE SET "
+                            "size_bytes=excluded.size_bytes,mtime_ns=excluded.mtime_ns,disposition='failed',retry_count=source_inventory.retry_count+1,"
+                            "unresolvable=CASE WHEN source_inventory.retry_count>=1 THEN 1 ELSE 0 END,retry_reason=excluded.retry_reason,rules_version=excluded.rules_version,updated_at=CURRENT_TIMESTAMP",
+                            (str(path), st.st_size, st.st_mtime_ns, "", repr(exc)[:200], RULES_VERSION)
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        upg_rows = connection.execute("SELECT paths_json FROM groups WHERE run_id=? AND decision='quality_upgrade' AND winner_source_path=?", (run_id, str(path))).fetchall()
+                        for u_row in upg_rows:
+                            detail_obj = json.loads(u_row["paths_json"])
+                            for superseded_path_str in detail_obj.get("superseded", []):
+                                orig_p = Path(superseded_path_str)
+                                arch_rel = orig_p.relative_to(output) if orig_p.is_relative_to(output) else orig_p.name
+                                arch_p = output / ARCHIVE_DIRNAME / arch_rel
+                                if arch_p.is_file() and not orig_p.is_file():
+                                    orig_p.parent.mkdir(parents=True, exist_ok=True)
+                                    os.replace(arch_p, orig_p)
+                                    connection.execute("UPDATE source_inventory SET disposition='published', output_path=? WHERE output_path=?", (str(orig_p), str(arch_p)))
+                                    log(f"[品质升级 / Upgrade] {path.name} 发布失败，已将归档旧版本 {orig_p.name} 恢复至原位")
+                    except Exception:
+                        pass
                 else:
                     disposition = "published" if real else "sample_validated"
                     connection.execute("UPDATE items SET disposition=?,output_path=?,metadata_state=?,lyrics_state=?,cover_state=? WHERE run_id=? AND source_path=?", (disposition, str(target) if target else None, *states, run_id, str(path)))
                     if real and disposition == "published" and target:
+                        published_dirs.add(target.parent)
+
                         try:
                             st = path.stat()
+                            art = target.parent.parent.name if target.parent.parent != output else ""
+                            tit = target.stem
+                            title_key = re.sub(r"[^\w\u4e00-\u9fff]", "", simplify_chinese(tit).casefold()) or tit.casefold()
+                            item_row = connection.execute("SELECT duration, fingerprint FROM items WHERE run_id=? AND source_path=?", (run_id, str(path))).fetchone()
+                            dur = float(item_row["duration"] or 0) if item_row else 0.0
+                            fp = item_row["fingerprint"] if item_row else ""
                             connection.execute(
-                                "INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,metadata_state,lyrics_state,cover_state,rules_version) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET size_bytes=excluded.size_bytes,mtime_ns=excluded.mtime_ns,sha256=excluded.sha256,disposition=excluded.disposition,output_path=excluded.output_path,metadata_state=excluded.metadata_state,lyrics_state=excluded.lyrics_state,cover_state=excluded.cover_state,rules_version=excluded.rules_version,updated_at=CURRENT_TIMESTAMP",
-                                (str(path), st.st_size, st.st_mtime_ns, sha256(path), disposition, str(target), states[0], states[1], states[2], RULES_VERSION)
+                                "INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,metadata_state,lyrics_state,cover_state,duration,artist,title,fingerprint,title_key,retry_count,unresolvable,rules_version) "
+                                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?) "
+                                "ON CONFLICT(source_path) DO UPDATE SET "
+                                "size_bytes=excluded.size_bytes,mtime_ns=excluded.mtime_ns,sha256=excluded.sha256,disposition=excluded.disposition,"
+                                "output_path=excluded.output_path,metadata_state=excluded.metadata_state,lyrics_state=excluded.lyrics_state,cover_state=excluded.cover_state,"
+                                "duration=excluded.duration,artist=excluded.artist,title=excluded.title,fingerprint=excluded.fingerprint,title_key=excluded.title_key,"
+                                "retry_count=0,unresolvable=0,rules_version=excluded.rules_version,updated_at=CURRENT_TIMESTAMP",
+                                (str(path), st.st_size, st.st_mtime_ns, sha256(path), disposition, str(target), states[0], states[1], states[2], dur, art, tit, fp, title_key, RULES_VERSION)
                             )
                         except OSError:
                             pass
@@ -2180,6 +2329,9 @@ def run_batch(mode: str, source: Path, output: Path, paths: list[Path], real: bo
                     update_phase(run_id, "publish", done_count, len(ordered), f"正在并发处理并发布 {done_count}/{len(ordered)} 个最终文件 (自适应线程: {pool_workers})")
         connection.commit()
         connection.close()
+        if real and published_dirs:
+            with db() as sweep_connection:
+                orphans_archived = sweep_orphan_conflict_copies(output, sweep_connection, target_dirs=published_dirs)
         persist_inventory(run_id)
         cleanup_run_root(run_root)
         with db() as connection:
@@ -2312,7 +2464,10 @@ def classify_sources(source: Path, output: Path | None = None) -> dict[str, list
                 buckets["unresolvable"].append(path)
                 continue
             if disposition == "failed":
-                buckets["retry"].append(path)
+                if unres or retries >= 2:
+                    buckets["unresolvable"].append(path)
+                else:
+                    buckets["retry"].append(path)
                 continue
             if disposition == "superseded":
                 # 已被淘汰归档的旧件不复活，哪怕它的判定出自更旧的规则。

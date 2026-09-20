@@ -1848,6 +1848,81 @@ class AppTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_chromaprint_packing_and_similarity(self) -> None:
+        raw_fp = [12345678, 87654321, 11223344, 99887766, 55443322]
+        packed = pipeline.pack_fingerprint(raw_fp)
+        self.assertIsInstance(packed, str)
+        self.assertTrue(len(packed) > 0)
+        unpacked = pipeline.unpack_fingerprint(packed)
+        self.assertEqual(unpacked, raw_fp)
+
+        # Self-similarity should be 1.0
+        self.assertAlmostEqual(pipeline.chromaprint_similarity(raw_fp, raw_fp), 1.0, places=4)
+
+        # Dissimilar fingerprints
+        diff_fp = [0, 0, 0, 0, 0]
+        self.assertLess(pipeline.chromaprint_similarity(raw_fp, diff_fp), 0.7)
+
+        # Empty fingerprint similarity
+        self.assertEqual(pipeline.chromaprint_similarity([], raw_fp), 0.0)
+
+    def test_strip_riff_chunk_protects_markers(self) -> None:
+        import struct
+        with tempfile.TemporaryDirectory() as d:
+            wav_file = Path(d) / "test.wav"
+            # Construct a minimal RIFF WAV with two LIST chunks:
+            # 1. LIST-adtl (marker chunk, 8 bytes payload: b"adtl1234") -> should NOT be stripped
+            # 2. LIST-INFO (metadata chunk, 8 bytes payload: b"INFO1234") -> SHOULD be stripped
+            chunk1 = b"LIST" + struct.pack("<I", 8) + b"adtl1234"
+            chunk2 = b"LIST" + struct.pack("<I", 8) + b"INFO1234"
+            data_chunk = b"data" + struct.pack("<I", 4) + b"\x00\x00\x00\x00"
+            riff_body = b"WAVE" + chunk1 + chunk2 + data_chunk
+            header = b"RIFF" + struct.pack("<I", len(riff_body))
+            wav_file.write_bytes(header + riff_body)
+
+            # Run strip_riff_chunk looking for b"LIST"
+            modified = pipeline.strip_riff_chunk(wav_file, b"LIST")
+            self.assertTrue(modified)
+            content = wav_file.read_bytes()
+            # LIST-adtl must remain intact!
+            self.assertIn(b"adtl1234", content)
+            # LIST-INFO must be gone!
+            self.assertNotIn(b"INFO1234", content)
+
+    def test_app_get_local_now(self) -> None:
+        import app
+        with patch.dict(os.environ, {"TZ": "Asia/Shanghai"}):
+            dt = app.get_local_now()
+            self.assertIsNotNone(dt)
+            self.assertIsNone(dt.tzinfo)
+
+    def test_circuit_breaker_two_failures_becomes_unresolvable(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            src_dir = Path(d) / "source"
+            out_dir = Path(d) / "output"
+            state_dir = Path(d) / "state"
+            src_dir.mkdir()
+            out_dir.mkdir()
+            state_dir.mkdir()
+            bad_song = src_dir / "bad.mp3"
+            bad_song.write_bytes(b"corrupt")
+
+            with patch.object(pipeline, "STATE", state_dir), patch.object(pipeline, "LEDGER", state_dir / "ledger-v6.sqlite"):
+                conn = pipeline.db()
+                try:
+                    st = bad_song.stat()
+                    conn.execute(
+                        "INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,retry_count,unresolvable,rules_version) VALUES(?,?,?,?,'failed',2,0,?)",
+                        (str(bad_song), st.st_size, st.st_mtime_ns, "badhash", pipeline.RULES_VERSION)
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                buckets = pipeline.classify_sources(src_dir, out_dir)
+                self.assertIn(bad_song, buckets["unresolvable"])
+                self.assertNotIn(bad_song, buckets["retry"])
+
 
 if __name__ == "__main__":
     unittest.main()
