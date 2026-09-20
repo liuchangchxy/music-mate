@@ -1,6 +1,29 @@
 #!/bin/bash
 set -eu
 
+TARGET_UI_CONFIG="${TRIM_APPDEST:-/var/apps/music-mate/target}/ui/config"
+if [ -f "$TARGET_UI_CONFIG" ] && [ -n "${service_port:-}" ]; then
+  sed -i "s/\"port\": \"[0-9]*\"/\"port\": \"${service_port}\"/g" "$TARGET_UI_CONFIG" || true
+fi
+
+APPDEST="${TRIM_APPDEST:-/var/apps/music-mate/target}"
+DOCKER_DIR="${APPDEST}/docker"
+if [ ! -d "$DOCKER_DIR" ] && [ -d "${APPDEST}/app/docker" ]; then
+  DOCKER_DIR="${APPDEST}/app/docker"
+fi
+if [ -d "$DOCKER_DIR" ]; then
+  ENV_FILE="${DOCKER_DIR}/.env"
+  [ -f "$ENV_FILE" ] || touch "$ENV_FILE"
+  if [ -n "${MUSIC_PATH:-}" ]; then
+    sed -i '/^MUSIC_PATH=/d' "$ENV_FILE" 2>/dev/null || true
+    echo "MUSIC_PATH=${MUSIC_PATH}" >> "$ENV_FILE"
+  fi
+  if [ -n "${service_port:-}" ]; then
+    sed -i '/^service_port=/d' "$ENV_FILE" 2>/dev/null || true
+    echo "service_port=${service_port}" >> "$ENV_FILE"
+  fi
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/sync-accessible-mounts.sh" ]; then
   bash "$SCRIPT_DIR/sync-accessible-mounts.sh" || true

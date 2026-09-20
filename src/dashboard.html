@@ -1502,7 +1502,7 @@
             <span id="sourceStatusBadge" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(34,197,94,0.12); color: #22c55e;">检查中...</span>
           </div>
           <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; margin-bottom: 8px;">
-            <input id="sourceInput" list="accessiblePathsList" required readonly style="flex: 1; margin: 0;">
+            <input id="sourceInput" list="accessiblePathsList" required readonly placeholder="请点击右侧「修改目录」或「浏览」指定待整理的源文件夹" style="flex: 1; margin: 0;">
             <select id="sourceSelect" class="quick-dir-select" style="display: none; width: auto; max-width: 150px; padding: 7px 8px; font-size: 12px; border-radius: 6px; border: 1px solid var(--card-border); background: var(--bg-subtle); color: var(--text-secondary); cursor: pointer;" onchange="if(this.value){const inp=document.getElementById('sourceInput');inp.value=this.value;inp.dispatchEvent(new Event('change'));}">
               <option value="">快捷选择...</option>
             </select>
@@ -1516,7 +1516,7 @@
             <span id="outputStatusBadge" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(34,197,94,0.12); color: #22c55e;">检查中...</span>
           </div>
           <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; margin-bottom: 8px;">
-            <input id="outputInput" list="accessiblePathsList" required readonly style="flex: 1; margin: 0;">
+            <input id="outputInput" list="accessiblePathsList" required readonly placeholder="请点击右侧「修改目录」或「浏览」指定整理后曲库文件夹" style="flex: 1; margin: 0;">
             <select id="outputSelect" class="quick-dir-select" style="display: none; width: auto; max-width: 150px; padding: 7px 8px; font-size: 12px; border-radius: 6px; border: 1px solid var(--card-border); background: var(--bg-subtle); color: var(--text-secondary); cursor: pointer;" onchange="if(this.value){const inp=document.getElementById('outputInput');inp.value=this.value;inp.dispatchEvent(new Event('change'));}">
               <option value="">快捷选择...</option>
             </select>
@@ -1536,7 +1536,7 @@
             <button type="button" id="cancelEditDirBtn" data-i18n="controls.cancelBtn" class="btn-main" style="background: var(--bg-subtle); border: 1px solid var(--card-border); padding: 8px 14px; font-size: 13px;">取消</button>
           </div>
           <div class="notice" id="cfgNotice" style="margin-top: 12px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); background: var(--bg-subtle); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--card-border);">
-            💡 <b>音乐目录映射说明</b>：本应用采用标准容器卷映射架构。安装时填写的 NAS 音乐路径已映射为容器内的 <code>/music</code> 目录。点击【修改目录】直接从下拉菜单中点选对应子目录即可（如 <code>/music/整理前</code> 和 <code>/music/整理后</code>），无需手敲复杂物理路径。
+            💡 <b>音乐目录映射说明</b>：本应用采用标准容器卷映射架构。安装向导中填写的 NAS 音乐路径已映射为容器内部的 <code>/music</code> 根目录。点击【修改目录】直接从下拉菜单或文件浏览树中点选您的源目录与输出目录，系统不设任何预设目录，完全由您自主规划。
           </div>
           <div class="storage-bar-box">
             <div class="progress-meta">
@@ -2199,7 +2199,7 @@
           browseBtn: "📁 浏览...",
           unauthTitle: "未检测到 /music 存储卷挂载",
           unauthDesc: "检测到本应用容器尚未挂载 /music 目录。请在飞牛应用中心（或 Docker 应用设置）中将您的 NAS 音乐主文件夹映射为 /music。完成后<b>刷新本页面</b>即可在下方直接点选，无需手动输入物理路径！",
-          noticeSource: `💡 <b>音乐目录映射与规划说明</b>：<br/>• <b>卷映射机制</b>：本应用采用标准 Docker 卷映射体系，安装时配置的 NAS 音乐主路径已自动映射为容器内部的 <code>/music</code> 目录；<br/>• <b>便捷点选</b>：点击【修改目录】后，可直接从下拉菜单中点选 <code>/music</code> 下的对应子文件夹（如 <code>/music/整理前</code>、<code>/music/整理后</code>），无需手敲底层物理路径；<br/>• <b>同卷兄弟目录（Btrfs 秒级 CoW 省盘）</b>：建议将「整理前」和「整理后」设为同级兄弟目录。同在 Btrfs 格式存储卷下时，系统将自动触发<b>秒级写时复制 (Reflink CoW)</b>，秒级完成整理且不额外占用磁盘空间；<br/>• <b>严禁相互嵌套</b>：整理前与整理后文件夹绝对不可互相嵌套（例如不可将整理后目录放在整理前目录内部）。`,
+          noticeSource: `💡 <b>音乐目录映射与规划说明</b>：<br/>• <b>卷映射机制</b>：本应用采用标准 Docker 卷映射体系，安装时配置的 NAS 音乐主路径已自动映射为容器内部的 <code>/music</code> 根目录；<br/>• <b>自主点选</b>：点击【修改目录】后，可直接从下拉菜单或文件树中自由点选 <code>/music</code> 下的任意子目录，系统绝不预设任何死板默认项，完全由您自主规划；<br/>• <b>同卷兄弟目录（Btrfs 秒级 CoW 省盘）</b>：建议将源目录和输出目录设为同级兄弟子目录。在飞牛 Btrfs 格式下，系统将自动触发<b>秒级写时复制 (Reflink CoW)</b>，秒级完成整理且不额外占用磁盘空间；<br/>• <b>严禁相互嵌套</b>：源目录与输出目录绝对不可互相嵌套（例如不可将整理后目录放在源目录内部）。`,
           statusBadges: {
             unconfigured: "未配置",
             sourceOk: "🟢 只读就绪",
@@ -2555,7 +2555,7 @@
           browseBtn: "📁 Browse...",
           unauthTitle: "Mounted /music Volume Not Detected",
           unauthDesc: "The /music directory is not mounted in the container. Please ensure your NAS music path is mounted as /music in fnOS App Center or Docker settings, then <b>refresh this page</b> to select folders directly from the dropdown list!",
-          noticeSource: `💡 <b>Music Directory Mapping & Structure Guide</b>:<br/>• <b>Volume Mapping</b>: Adheres to standard Docker volume architecture. The NAS music path configured during installation is mapped directly to <code>/music</code> inside the container;<br/>• <b>Convenient Selection</b>: Click [Edit Directories] to select any subdirectories under <code>/music</code> (e.g. <code>/music/Source</code>, <code>/music/Library</code>) without manual typing;<br/>• <b>Sibling Subdirectories (Instant Btrfs CoW)</b>: Keep Source and Library as sibling folders under the same volume. On fnOS default Btrfs filesystem, this automatically triggers <b>Reflink Copy-on-Write (CoW)</b>, organizing in seconds with zero extra disk footprint;<br/>• <b>Strict Boundary</b>: Source and output folders must never be nested within each other.`,
+          noticeSource: `💡 <b>Music Directory Mapping & Structure Guide</b>:<br/>• <b>Volume Mapping</b>: Adheres to standard Docker volume architecture. The NAS music path configured during installation is mapped directly to <code>/music</code> inside the container;<br/>• <b>Autonomous Selection</b>: Click [Edit Directories] to select any subdirectories under <code>/music</code> via dropdown or file browser. No rigid defaults are pre-selected; you have full freedom over your directory layout;<br/>• <b>Sibling Subdirectories (Instant Btrfs CoW)</b>: Keep source and output folders as sibling subdirectories under the same volume. On fnOS default Btrfs filesystem, this automatically triggers <b>Reflink Copy-on-Write (CoW)</b>, organizing in seconds with zero extra disk footprint;<br/>• <b>Strict Boundary</b>: Source and output folders must never be nested within each other.`,
           statusBadges: {
             unconfigured: "Unconfigured",
             sourceOk: "🟢 Read-Ready",

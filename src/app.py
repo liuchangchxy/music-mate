@@ -24,8 +24,6 @@ except Exception:
 STATE = Path(os.environ.get("MUSIC_STATE", os.environ.get("MUSIC_DATA", "/state")))
 CONFIG, STATUS, LOCK, LOG = STATE / "config.json", STATE / "status.json", STATE / "pipeline.lock", STATE / "last-run.log"
 PORT = int(os.environ.get("MUSIC_UI_PORT", "8091"))
-DEFAULT_SOURCE = os.environ.get("MUSIC_MOUNT_SOURCE", "")
-DEFAULT_OUTPUT = os.environ.get("MUSIC_MOUNT_OUTPUT", "")
 if Path("/appdata").is_dir():
     os.environ.setdefault("MUSIC_CACHE_DIR", "/appdata/cache")
 
@@ -53,51 +51,20 @@ def get_or_init_config() -> dict:
     src_val = cfg.get("source_dir", "")
     out_val = cfg.get("output_dir", "")
 
-    # If already configured, verify validity against current mounts or map to /music
+    # Only validate existing user-configured paths against accessible mounts;
+    # if a configured path is no longer accessible, reset it to empty.
     if src_val and not any(Path(src_val) == a or a in Path(src_val).parents for a in acc):
-        if Path("/music").is_dir():
-            for m in ("整理前-第一部分", "整理前-第二部分", "整理前"):
-                if m in src_val and (Path("/music") / m).exists():
-                    src_val = str(Path("/music") / m)
-                    break
-        if src_val and not any(Path(src_val) == a or a in Path(src_val).parents for a in acc):
-            src_val = ""
+        src_val = ""
+        cfg["source_dir"] = ""
+        changed = True
+
     if out_val and not any(Path(out_val) == a or a in Path(out_val).parents for a in acc):
-        if Path("/music").is_dir() and "整理后" in out_val and (Path("/music") / "整理后").exists():
-            out_val = str(Path("/music") / "整理后")
-        if out_val and not any(Path(out_val) == a or a in Path(out_val).parents for a in acc):
-            out_val = ""
-
-    if not src_val and DEFAULT_SOURCE:
-        p = Path(DEFAULT_SOURCE)
-        if any(p == a or a in p.parents for a in acc):
-            src_val = DEFAULT_SOURCE
-
-    if not out_val and DEFAULT_OUTPUT:
-        p = Path(DEFAULT_OUTPUT)
-        if any(p == a or a in p.parents for a in acc):
-            out_val = DEFAULT_OUTPUT
-
-    # Smart auto-detection if still empty
-    if not src_val or not out_val:
-        source_keywords = ("整理前", "未整理", "raw", "source", "input", "download", "下载")
-        output_keywords = ("整理后", "已整理", "output", "library", "music", "曲库", "音乐库")
-
-        for p in acc:
-            name_lower = p.name.lower()
-            if not src_val and any(kw in name_lower for kw in source_keywords):
-                if p != Path(out_val) if out_val else True:
-                    src_val = str(p)
-            elif not out_val and any(kw in name_lower for kw in output_keywords):
-                if p != Path(src_val) if src_val else True:
-                    out_val = str(p)
-
-    if src_val and cfg.get("source_dir") != src_val:
-        cfg["source_dir"] = src_val
+        out_val = ""
+        cfg["output_dir"] = ""
         changed = True
-    if out_val and cfg.get("output_dir") != out_val:
-        cfg["output_dir"] = out_val
-        changed = True
+
+    # Absolutely NO hardcoded guesses, NO keyword heuristics, NO default directory assignment.
+    # If not configured, keep it strictly empty ("") and let the user explicitly select via Web UI.
 
     if changed:
         try:
@@ -1431,20 +1398,6 @@ if __name__ == "__main__":
     except OSError:
         pass
 
-    # Auto-initialize config from wizard environment variables on first boot
-    curr_cfg = read_json(CONFIG, {})
-    env_src = os.environ.get("MUSIC_MOUNT_SOURCE", "").strip()
-    env_out = os.environ.get("MUSIC_MOUNT_OUTPUT", "").strip()
-    if env_src and env_out:
-        cfg_updated = False
-        if not curr_cfg.get("source_dir"):
-            curr_cfg["source_dir"] = env_src
-            cfg_updated = True
-        if not curr_cfg.get("output_dir"):
-            curr_cfg["output_dir"] = env_out
-            cfg_updated = True
-        if cfg_updated:
-            write_json(CONFIG, curr_cfg)
     curr_status = read_json(STATUS, {})
     if curr_status.get("state") == "running":
         write_json(STATUS, {
