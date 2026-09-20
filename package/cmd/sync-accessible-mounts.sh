@@ -20,8 +20,8 @@ CLEAN_PATHS=()
 if [ -n "$RAW_PATHS" ]; then
   IFS=':' read -r -a PATH_ARRAY <<< "$RAW_PATHS"
   for p in "${PATH_ARRAY[@]}"; do
-    p="$(echo "$p" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    if [ -n "$p" ] && [ -d "$p" ]; then
+    p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#/*$##')"
+    if [ -n "$p" ]; then
       CLEAN_PATHS+=("$p")
     fi
   done
