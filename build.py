@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an fnOS .fpk package from the fn-music-companion source directory."""
+"""Build an fnOS .fpk package from the music-mate source directory."""
 import io
 import os
 import tarfile

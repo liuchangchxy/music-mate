@@ -1,8 +1,8 @@
 services:
   organizer:
-    image: ${MUSIC_IMAGE:-changchxy/fn-music-companion:1.1.0}
+    image: ${MUSIC_IMAGE:-changchxy/music-mate:1.1.0}
     pull_policy: always
-    container_name: fn-music-companion-organizer
+    container_name: music-mate-organizer
     restart: unless-stopped
     user: "0:0"
     environment:

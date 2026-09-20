@@ -86,7 +86,7 @@ flowchart LR
 
 ### 方式一：飞牛 NAS 应用中心 FPK 安装（最推荐）
 
-1. 在项目 GitHub 仓库的 [Releases 页面](https://github.com/liuchangchxy/fn-music-companion/releases) 下载最新的 `fn-music-companion.fpk` 文件；
+1. 在项目 GitHub 仓库的 [Releases 页面](https://github.com/liuchangchxy/music-mate/releases) 下载最新的 `fn-music-companion.fpk` 文件；
 2. 打开飞牛私有云（fnOS）桌面，进入 **应用中心**；
 3. 点击应用中心界面右上角或左下角的 **手动安装**，选择下载好的 `.fpk` 文件上传；
 4. 在安装向导中确认 **Web 服务端口**（默认 8091，如遇占用可修改），点击完成安装；
@@ -111,9 +111,9 @@ flowchart LR
 version: "3.8"
 
 services:
-  music-companion:
-    image: changchxy/fn-music-companion:1.0.0
-    container_name: fn-music-companion
+  music-mate:
+    image: changchxy/music-mate:1.1.0
+    container_name: music-mate
     restart: unless-stopped
     environment:
       - MUSIC_UI_PORT=8091
@@ -162,8 +162,8 @@ docker compose up -d
 
 - [x] **官方 FPK 打包规范对齐**：遵循飞牛应用中心规范封装（包含 `manifest`、`wizard/config`、`wizard/install`、`wizard/uninstall`、`micro_app` 桌面集成配置与高分辨率图标）。
 - [x] **真实 NAS 实机测试通过**：已在真实飞牛 NAS 物理机上完成安装向导、目录权限挂载、桌面图标启动、Web 控制台联动与卸载清理的全流程回归测试。
-- [x] **公共镜像就绪**：Docker Hub 镜像 `changchxy/fn-music-companion:1.0.0` 和 `latest` 已全面推送完毕，国内拉取通畅。
-- [x] **开源仓库就绪**：完整源码与全套 85 项自动化单元测试已同步至 GitHub 仓库并全绿通过。
+- [x] **公共镜像就绪**：Docker Hub 镜像 `changchxy/music-mate:1.1.0` 和 `latest` 已全面推送完毕，国内拉取通畅。
+- [x] **开源仓库就绪**：完整源码与全套 90 项自动化单元测试已同步至 GitHub 仓库并全绿通过。
 - 🚀 **官方应用中心上线进展**：
   - 目前用户已经可以随时通过飞牛 **“应用中心” -> “手动安装”** 导入 `fn-music-companion.fpk` 体验完整的原生应用能力；
   - 开发者已准备就绪官方上架申请材料，提交飞牛官方团队审核通过后，即可直接在飞牛应用中心“一键搜索安装”！

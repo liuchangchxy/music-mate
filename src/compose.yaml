@@ -3,9 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${MUSIC_IMAGE:-changchxy/fn-music-companion:1.0.0}
+    image: ${MUSIC_IMAGE:-changchxy/music-mate:1.1.0}
     pull_policy: if_not_present
-    container_name: fn-music-companion-organizer
+    container_name: music-mate-organizer
     restart: unless-stopped
     environment:
       MUSIC_STATE: /appdata/v6-state
