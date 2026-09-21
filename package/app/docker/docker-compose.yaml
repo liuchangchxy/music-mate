@@ -1,6 +1,6 @@
 services:
   organizer:
-    image: ${MUSIC_IMAGE:-changchxy/music-mate:1.1.0}
+    image: ${MUSIC_IMAGE:-changchxy/music-mate:1.1.1}
     pull_policy: always
     container_name: music-mate-organizer
     restart: unless-stopped

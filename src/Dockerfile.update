@@ -1,4 +1,4 @@
-FROM changchxy/fn-music-companion:1.0.0
+FROM changchxy/music-mate:1.1.0
 USER root
 RUN rm -rf /vol* 2>/dev/null || true
 COPY app.py pipeline.py domestic_provider.py dashboard.html /opt/music-rebuild/
