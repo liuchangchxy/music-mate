@@ -26,6 +26,11 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 
+def log(message: str) -> None:
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now_str}] {message}", flush=True)
+
+
 def _sigterm_handler(signum, frame):
     log("收到终止信号 (SIGTERM)，正在安全退出并触发沙箱清理...")
     raise SystemExit(1)
@@ -92,10 +97,6 @@ VARIANT_WORDS = (
 )
 DESTINATION_LOCK = threading.Lock()
 
-
-def log(message: str) -> None:
-    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now_str}] {message}", flush=True)
 
 
 def atomic_json(path: Path, value: dict) -> None:

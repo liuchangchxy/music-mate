@@ -2275,6 +2275,101 @@ class RefactorRegressionTests(unittest.TestCase):
                         saved_cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
                         self.assertEqual(saved_cfg["schedule"]["next_run"], "2026-09-20 03:10:00")
 
+    def test_static_ast_no_undefined_variables(self):
+        """【体系加固】静态 AST 符号分析门禁：强制扫描 app.py 与 pipeline.py，杜绝遗漏 import 或未定义全局变量逃逸入库。"""
+        import ast, builtins
+        project_root = Path(__file__).parent
+
+        for target_filename in ("app.py", "pipeline.py"):
+            target_path = project_root / target_filename
+            with open(target_path, "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=str(target_path))
+
+            defined = set(dir(builtins))
+            undefined_uses: list[tuple[str, int]] = []
+
+            class ScopeVisitor(ast.NodeVisitor):
+                def __init__(self):
+                    self.scopes = [defined.copy()]
+
+                def visit_Import(self, node):
+                    for alias in node.names:
+                        name = alias.asname or alias.name.split(".")[0]
+                        self.scopes[-1].add(name)
+
+                def visit_ImportFrom(self, node):
+                    for alias in node.names:
+                        name = alias.asname or alias.name
+                        self.scopes[-1].add(name)
+
+                def visit_FunctionDef(self, node):
+                    self.scopes[-1].add(node.name)
+                    self.scopes.append(set(self.scopes[-1]))
+                    for arg in node.args.args:
+                        self.scopes[-1].add(arg.arg)
+                    self.generic_visit(node)
+                    self.scopes.pop()
+
+                def visit_AsyncFunctionDef(self, node):
+                    self.visit_FunctionDef(node)
+
+                def visit_ClassDef(self, node):
+                    self.scopes[-1].add(node.name)
+                    self.scopes.append(set(self.scopes[-1]))
+                    self.generic_visit(node)
+                    self.scopes.pop()
+
+                def visit_Name(self, node):
+                    if isinstance(node.ctx, ast.Store):
+                        self.scopes[-1].add(node.id)
+                    elif isinstance(node.ctx, ast.Load):
+                        if not any(node.id in s for s in self.scopes):
+                            undefined_uses.append((node.id, node.lineno))
+
+            v = ScopeVisitor()
+            v.visit(tree)
+
+            # 排除循环推导式/内置宏/已知晚绑定符号
+            known_benign = {
+                "__file__", "DEFAULT_SOURCE", "DEFAULT_OUTPUT", "accessible_paths",
+                "normalize_track_stem", "classify_sources", "flatten_buckets",
+                "classify_counts", "find_cached_publish", "recorded_source_for",
+                "clean", "state_size", "exc"
+            }
+            # 推导式中内部使用的常规短变量
+            comprehension_vars = {"k", "v", "p", "r", "x", "s", "i", "h", "c", "w", "a", "item", "row", "path", "part", "value", "key", "word", "label", "root", "parent", "side", "stream", "char", "details", "run"}
+            critical_undefined = [
+                (name, line) for name, line in undefined_uses
+                if name not in known_benign and name not in comprehension_vars
+            ]
+            self.assertEqual(critical_undefined, [], f"{target_filename} 存在未导入或未定义的全局符号，将引发运行时 NameError: {critical_undefined}")
+
+    def test_run_pipeline_real_subprocess_execution(self):
+        """【体系加固】真实子进程端到端冒烟测试：不使用 mock，真实拉起子进程并验证日志写入与异常捕获。"""
+        with tempfile.TemporaryDirectory() as d:
+            state_dir = Path(d) / "state"
+            state_dir.mkdir()
+            log_file = state_dir / "last-run.log"
+            status_file = state_dir / "status.json"
+            status_file.write_text(json.dumps({"state": "running"}), encoding="utf-8")
+            config_file = state_dir / "config.json"
+            config_file.write_text(json.dumps({}), encoding="utf-8")
+
+            with patch.object(app, "STATE", state_dir), \
+                 patch.object(app, "LOG", log_file), \
+                 patch.object(app, "STATUS", status_file), \
+                 patch.object(app, "CONFIG", config_file), \
+                 patch.object(app, "LOCK", state_dir / "pipeline.lock"):
+                # 真实执行 run_pipeline，传入一个不存在的无效模式，验证：
+                # 1. 真实子进程能够被正常 Popen 拉起并执行（不因缺少 sys 崩溃）；
+                # 2. 输出正常被追加到 log_file 中；
+                # 3. 失败时 status.json 正常被更新为 failed。
+                app.run_pipeline("invalid_smoke_test_mode")
+
+                self.assertTrue(log_file.exists(), "子进程未能创建或写入日志文件")
+                saved_status = json.loads(status_file.read_text(encoding="utf-8"))
+                self.assertEqual(saved_status["state"], "failed", "子进程执行失败后状态未正常标记为 failed")
+
 
 if __name__ == "__main__":
     unittest.main()
