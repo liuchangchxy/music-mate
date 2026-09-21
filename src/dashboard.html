@@ -507,6 +507,7 @@
     .badge-done { background: var(--success-glow); color: var(--success-light); }
     .badge-running { background: var(--primary-glow); color: var(--primary); }
     .badge-failed { background: var(--danger-glow); color: var(--danger); }
+    .badge-stopped { background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25); }
     .table-clickable-row { cursor: pointer; transition: background 0.15s ease; }
     .table-clickable-row:hover td { background: rgba(47, 129, 247, 0.08) !important; }
     .btn-link {
@@ -3390,7 +3391,7 @@
           if (runs) {
             renderRuns(runs);
           }
-          renderUnresolvedBanner(st.unresolvable_count || 0);
+          renderUnresolvedBanner((st.unresolvable_count || 0) + (st.fallback_count || 0));
         }
       } catch (err) {
         console.error("Error rendering status/metrics:", err);
@@ -3516,19 +3517,19 @@
 
       const verTotal = m.possible_version_groups !== undefined ? m.possible_version_groups : (m.version_groups || 0);
       if (elVersion) elVersion.textContent = verTotal.toLocaleString();
-      const unresGlobal = (typeof stateCache !== "undefined" && stateCache && stateCache.unresolvable_count !== undefined) ? stateCache.unresolvable_count : 0;
       const runFailed = m.failed || 0;
-      const totalExceptions = unresGlobal + runFailed;
-      if (elFailed) elFailed.textContent = totalExceptions.toLocaleString();
+      if (elFailed) elFailed.textContent = runFailed.toLocaleString();
 
       const failedHint = document.getElementById("m-failed-hint");
-      const mH = t("metricsHints") || {};
       if (failedHint) {
+        const unresGlobal = (typeof stateCache !== "undefined" && stateCache && stateCache.unresolvable_count !== undefined) ? stateCache.unresolvable_count : 0;
         const fbCount = (typeof stateCache !== "undefined" && stateCache && stateCache.fallback_count !== undefined) ? stateCache.fallback_count : (m.fallback_published || 0);
-        if (fbCount > 0) {
-          failedHint.textContent = `${mH.fallbackNotice || (currentLang === 'zh' ? '未匹配标签' : 'Fallback')}: ${fbCount} · 点击处置`;
-        } else if (totalExceptions > 0) {
-          failedHint.textContent = `${currentLang === 'zh' ? '待处置疑难' : 'Pending'}: ${totalExceptions} · 点击查看`;
+        const totalPending = unresGlobal + fbCount;
+        if (totalPending > 0) {
+          const pendingLabel = currentLang === 'zh' ? '全库累积待处置' : 'Library Pending';
+          failedHint.innerHTML = `<span style="display:inline-block;padding:1px 6px;border-radius:10px;background:rgba(210,153,34,0.18);color:var(--warning);font-weight:600;font-size:11px;">${pendingLabel}: ${totalPending}</span> · ${currentLang === 'zh' ? '点击查看' : 'Click to view'}`;
+        } else if (runFailed > 0) {
+          failedHint.textContent = `${currentLang === 'zh' ? '本次处理异常' : 'Failed'}: ${runFailed} · ${currentLang === 'zh' ? '点击查看' : 'Click to view'}`;
         } else {
           failedHint.textContent = t("metrics.failedHint") || '损坏或拒绝文件';
         }
@@ -3918,7 +3919,7 @@
         const statusText = t("history.status." + r.status) || r.status;
         const phaseKey = phaseMap[r.phase] || r.phase;
         const phaseText = t("history.phases." + phaseKey) || phaseKey || "-";
-        const badgeClass = r.status === "done" ? "badge-done" : (r.status === "failed" ? "badge-failed" : "badge-running");
+        const badgeClass = r.status === "done" ? "badge-done" : (r.status === "failed" ? "badge-failed" : (r.status === "stopped" ? "badge-stopped" : "badge-running"));
         const viewDetailsText = t("history.viewDetails") || "查看详情";
         return `
           <tr class="table-clickable-row" onclick="openRunDetailsModal('${escapeHTML(r.id)}')">
@@ -4014,7 +4015,7 @@
 
       const modeText = t("history.modes." + r.mode) || r.mode;
       const statusText = t("history.status." + r.status) || r.status;
-      const badgeClass = r.status === "done" ? "badge-done" : (r.status === "failed" ? "badge-failed" : "badge-running");
+      const badgeClass = r.status === "done" ? "badge-done" : (r.status === "failed" ? "badge-failed" : (r.status === "stopped" ? "badge-stopped" : "badge-running"));
 
       if (timeEl) {
         timeEl.innerHTML = `
@@ -4035,7 +4036,7 @@
       const countFailed = allItems.filter(it => it.disposition === "failed").length;
       const countDedupe = countExact + countAcoustic;
 
-      const scanned = m.scanned_total !== undefined ? m.scanned_total : (m.scanned !== undefined ? m.scanned : allItems.length);
+      const scanned = m.scanned_total !== undefined ? m.scanned_total : (currentRunDetails.total_items !== undefined ? currentRunDetails.total_items : (m.scanned !== undefined ? m.scanned : allItems.length));
       const published = m.published !== undefined ? m.published : countPublished;
       const exact = m.exact_duplicate !== undefined ? m.exact_duplicate : (m.exact_duplicates !== undefined ? m.exact_duplicates : countExact);
       const acoustic = m.same_recording_duplicate !== undefined ? m.same_recording_duplicate : (m.acoustic_duplicates !== undefined ? m.acoustic_duplicates : countAcoustic);

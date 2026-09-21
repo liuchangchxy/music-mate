@@ -29,6 +29,11 @@ except Exception:
 STATE = Path(os.environ.get("MUSIC_STATE", os.environ.get("MUSIC_DATA", "/state")))
 CONFIG, STATUS, LOCK, LOG = STATE / "config.json", STATE / "status.json", STATE / "pipeline.lock", STATE / "last-run.log"
 PORT = int(os.environ.get("MUSIC_UI_PORT", "8091"))
+FALLBACK_OUTPUT_COND = (
+    "(output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' "
+    "OR output_path LIKE '%未知专辑%' OR output_path LIKE '%未分类专辑%' OR output_path LIKE '%Unknown Album%' "
+    "OR metadata_state IN ('metadata_not_found', 'fallback_tags'))"
+)
 if Path("/appdata").is_dir():
     os.environ.setdefault("MUSIC_CACHE_DIR", "/appdata/cache")
 
@@ -415,7 +420,7 @@ def report(run_id: str | None = None) -> dict:
         cover_embedded = covers.get("cover_embedded", 0)
 
         fb_row = db_conn.execute(
-            "SELECT count(*) FROM items WHERE run_id=? AND disposition IN ('published', 'sample_validated') AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')",
+            f"SELECT count(*) FROM items WHERE run_id=? AND disposition IN ('published', 'sample_validated') AND {FALLBACK_OUTPUT_COND}",
             (target_run_id,)
         ).fetchone()
         fallback_published = fb_row[0] if fb_row else 0
@@ -693,9 +698,11 @@ def run_pipeline(mode: str) -> None:
             env["http_proxy"] = proxy
             env["https_proxy"] = proxy
             env["all_proxy"] = proxy
+        script_path = str(Path(__file__).resolve().with_name("pipeline.py"))
+        py_bin = sys.executable or "python3"
         with LOG.open("a", encoding="utf-8") as handle:
             proc = subprocess.Popen(
-                ["python3", "/opt/music-rebuild/pipeline.py", mode],
+                [py_bin, script_path, mode],
                 stdout=handle,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -734,6 +741,14 @@ def start_mode(mode: str, lang: str = "zh") -> tuple[int, str]:
     now_str = get_local_now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
+        if LOG.exists() and LOG.stat().st_size > 0:
+            rotated = LOG.with_name("last-run.1.log")
+            try:
+                if rotated.exists():
+                    rotated.unlink()
+                LOG.rename(rotated)
+            except Exception:
+                pass
         LOG.write_text(f"[{now_str}] 正在初始化并启动 [{mode}] 整理流水线...\n", encoding="utf-8")
     except Exception:
         pass
@@ -894,6 +909,13 @@ def check_and_trigger_schedule(now_dt: datetime | None = None) -> bool:
             cfg["schedule"] = sched
             write_json(CONFIG, cfg)
             return True
+        else:
+            # 启动受阻（如已有任务运行冲突或校验未过），智能退避 10 分钟重试
+            backoff_dt = now + timedelta(minutes=10)
+            sched["next_run"] = backoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+            cfg["schedule"] = sched
+            write_json(CONFIG, cfg)
+            return False
     return False
 
 
@@ -1047,7 +1069,7 @@ class Handler(BaseHTTPRequestHandler):
                 with connection() as db_conn:
                     unres_row = db_conn.execute("SELECT count(*) FROM source_inventory WHERE unresolvable=1 OR (disposition='failed' AND retry_count >= 2)").fetchone()
                     st["unresolvable_count"] = unres_row[0] if unres_row else 0
-                    fb_row = db_conn.execute("SELECT count(*) FROM source_inventory WHERE disposition='published' AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')").fetchone()
+                    fb_row = db_conn.execute(f"SELECT count(*) FROM source_inventory WHERE disposition='published' AND {FALLBACK_OUTPUT_COND}").fetchone()
                     st["fallback_count"] = fb_row[0] if fb_row else 0
             except Exception:
                 st["unresolvable_count"] = 0
@@ -1074,6 +1096,9 @@ class Handler(BaseHTTPRequestHandler):
                     if not run_row:
                         self.send(404, "未找到该运行记录", "text/plain; charset=utf-8")
                         return
+                    total_items_row = db_conn.execute("SELECT count(*) FROM items WHERE run_id=?", (run_id,)).fetchone()
+                    total_items_count = total_items_row[0] if total_items_row else 0
+
                     items = db_conn.execute(
                         "SELECT source_path, source_size, source_kind, disposition, output_path, metadata_state, lyrics_state, cover_state, error FROM items WHERE run_id=? ORDER BY id ASC LIMIT 500",
                         (run_id,)
@@ -1102,7 +1127,8 @@ class Handler(BaseHTTPRequestHandler):
 
                     data = {
                         "run": dict(run_row),
-                        "items": item_dicts
+                        "items": item_dicts,
+                        "total_items": total_items_count,
                     }
                     if data["run"].get("summary_json"):
                         try:
@@ -1116,18 +1142,18 @@ class Handler(BaseHTTPRequestHandler):
                     upg_row = db_conn.execute("SELECT count(*) FROM groups WHERE run_id=? AND decision='quality_upgrade'", (run_id,)).fetchone()
                     upg_count = upg_row[0] if upg_row else 0
                     fb_row = db_conn.execute(
-                        "SELECT count(*) FROM items WHERE run_id=? AND disposition IN ('published', 'sample_validated') AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found')",
+                        f"SELECT count(*) FROM items WHERE run_id=? AND disposition IN ('published', 'sample_validated') AND {FALLBACK_OUTPUT_COND}",
                         (run_id,)
                     ).fetchone()
                     fallback_count = fb_row[0] if fb_row else 0
 
                     if not summary.get("metrics"):
                         disp_counts = {}
-                        for it in items:
-                            d = it["disposition"]
-                            disp_counts[d] = disp_counts.get(d, 0) + 1
+                        disp_rows = db_conn.execute("SELECT disposition, count(*) FROM items WHERE run_id=? GROUP BY disposition", (run_id,)).fetchall()
+                        for r_d, r_c in disp_rows:
+                            disp_counts[r_d] = r_c
                         summary["metrics"] = {
-                            "scanned_total": len(items),
+                            "scanned_total": total_items_count,
                             "published": disp_counts.get("published", 0),
                             "exact_duplicate": disp_counts.get("duplicate_exact", 0),
                             "same_recording_duplicate": disp_counts.get("duplicate_same_recording", 0),
@@ -1151,7 +1177,7 @@ class Handler(BaseHTTPRequestHandler):
                         "SELECT source_path, size_bytes, mtime_ns, disposition, output_path, retry_count, retry_reason, updated_at FROM source_inventory WHERE unresolvable=1 OR (disposition='failed' AND retry_count >= 2) ORDER BY updated_at DESC LIMIT 200"
                     ).fetchall()
                     fallback_rows = db_conn.execute(
-                        "SELECT source_path, size_bytes, mtime_ns, disposition, output_path, retry_count, retry_reason, updated_at FROM source_inventory WHERE disposition='published' AND (output_path LIKE '%未知艺术家%' OR output_path LIKE '%Unknown Artist%' OR metadata_state='metadata_not_found') ORDER BY updated_at DESC LIMIT 200"
+                        f"SELECT source_path, size_bytes, mtime_ns, disposition, output_path, retry_count, retry_reason, updated_at FROM source_inventory WHERE disposition='published' AND {FALLBACK_OUTPUT_COND} ORDER BY updated_at DESC LIMIT 200"
                     ).fetchall()
                     self.send(200, json.dumps({
                         "unresolved": [dict(r) for r in unresolved_rows],

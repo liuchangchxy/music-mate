@@ -2116,6 +2116,166 @@ class TestFrontendStaticContracts(unittest.TestCase):
         self.assertLessEqual(len(raw_accesses), 2, f"发现违规裸读 I18N[...]: {raw_accesses}")
 
 
+
+class RefactorRegressionTests(unittest.TestCase):
+    def test_exact_dedupe_hash_cache_penetration(self):
+        """验证 exact_dedupe：大小唯一者不查哈希，缓存命中者不重复读盘。"""
+        with tempfile.TemporaryDirectory() as d:
+            state_dir = Path(d) / "state"
+            src_dir = Path(d) / "source"
+            state_dir.mkdir()
+            src_dir.mkdir()
+
+            f1 = src_dir / "song1.mp3"
+            f2 = src_dir / "song2.mp3"
+            f3 = src_dir / "unique.mp3"
+            f1.write_bytes(b"content_same" * 100)
+            f2.write_bytes(b"content_same" * 100)
+            f3.write_bytes(b"unique_size_12345")
+
+            hash_cache = {
+                f1: "hash_same",
+                f2: "hash_same",
+            }
+
+            with patch.object(pipeline, "STATE", state_dir), \
+                 patch.object(pipeline, "LEDGER", state_dir / "ledger-v6.sqlite"), \
+                 patch.object(pipeline, "sha256", wraps=pipeline.sha256) as mock_sha:
+                conn = pipeline.db()
+                try:
+                    conn.execute("INSERT INTO runs(id,mode,source_dir,output_dir,status) VALUES('r_test','full','/s','/o','running')")
+                    for p in (f1, f2, f3):
+                        conn.execute("INSERT INTO items(run_id,source_path,source_size,source_mtime_ns,duration,source_kind,disposition) VALUES('r_test',?,?,1,100,'audio','candidate')",
+                                     (str(p), p.stat().st_size))
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                remaining = pipeline.exact_dedupe("r_test", src_dir, {f1, f2, f3}, library=None, hash_cache=hash_cache)
+                # f3 是唯一大小保留，f1/f2 中保留一个，另一个被去重
+                self.assertEqual(len(remaining), 2)
+                self.assertIn(f3, remaining)
+                # 关键断言：因为 f3 大小独一无二直接跳过，f1/f2 在 hash_cache 中命中，sha256 调用次数必须为 0！
+                self.assertEqual(mock_sha.call_count, 0)
+
+    def test_fallback_output_cond_coverage(self):
+        """验证 pipeline 与 app 的 FALLBACK_OUTPUT_COND 一致性并精准覆盖所有未知/未分类情形。"""
+        self.assertEqual(pipeline.FALLBACK_OUTPUT_COND, app.FALLBACK_OUTPUT_COND)
+
+        with tempfile.TemporaryDirectory() as d:
+            state_dir = Path(d) / "state"
+            state_dir.mkdir()
+            with patch.object(pipeline, "STATE", state_dir), patch.object(pipeline, "LEDGER", state_dir / "ledger-v6.sqlite"):
+                conn = pipeline.db()
+                try:
+                    test_cases = [
+                        ("/out/未知艺术家/Album/s1.mp3", "published", "cloud_matched", True),
+                        ("/out/Unknown Artist/Album/s2.mp3", "published", "cloud_matched", True),
+                        ("/out/Artist/未知专辑/s3.mp3", "published", "cloud_matched", True),
+                        ("/out/Artist/未分类专辑/s4.mp3", "published", "cloud_matched", True),
+                        ("/out/Artist/Unknown Album/s5.mp3", "published", "cloud_matched", True),
+                        ("/out/Artist/Album/s6.mp3", "published", "fallback_tags", True),
+                        ("/out/Artist/Album/s7.mp3", "published", "cloud_matched", False),
+                    ]
+                    for idx, (path, disp, meta, _) in enumerate(test_cases):
+                        conn.execute(
+                            "INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,metadata_state) "
+                            "VALUES(?,?,1,'h',?,?,?)",
+                            (f"/src/{idx}.mp3", 1000 + idx, disp, path, meta)
+                        )
+                    conn.commit()
+
+                    query = f"SELECT output_path FROM source_inventory WHERE disposition = 'published' AND ({pipeline.FALLBACK_OUTPUT_COND})"
+                    matched = [r["output_path"] for r in conn.execute(query).fetchall()]
+                    expected = [tc[0] for tc in test_cases if tc[3]]
+                    self.assertEqual(sorted(matched), sorted(expected))
+                finally:
+                    conn.close()
+
+    def test_corrupted_file_persisted_to_source_inventory(self):
+        """损坏的音频文件在校验阶段必须被沉淀至 source_inventory(unresolvable=1, disposition='failed')。"""
+        with tempfile.TemporaryDirectory() as d:
+            state_dir = Path(d) / "state"
+            src_dir = Path(d) / "source"
+            state_dir.mkdir()
+            src_dir.mkdir()
+
+            bad_file = src_dir / "corrupted.mp3"
+            bad_file.write_bytes(b"invalid garbage header not audio 1234567890")
+
+            with patch.object(pipeline, "STATE", state_dir), patch.object(pipeline, "LEDGER", state_dir / "ledger-v6.sqlite"):
+                conn = pipeline.db()
+                try:
+                    conn.execute("INSERT INTO runs(id,mode,source_dir,output_dir,status) VALUES('r_bad','incremental','/s','/o','running')")
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                # analyse_regular 遇到损坏文件
+                res = pipeline.analyse_regular("r_bad", [bad_file])
+                self.assertIn(bad_file, res)
+                self.assertIn("error", res[bad_file])
+
+                # 断言：已持久化进 source_inventory
+                conn = pipeline.db()
+                try:
+                    row = conn.execute("SELECT * FROM source_inventory WHERE source_path = ?", (str(bad_file),)).fetchone()
+                    self.assertIsNotNone(row)
+                    self.assertEqual(row["disposition"], "failed")
+                    self.assertEqual(row["unresolvable"], 1)
+                finally:
+                    conn.close()
+
+    def test_log_rotation_and_scheduler_backoff(self):
+        """测试 start_mode 日志轮转以及调度触发受阻时的 10 分钟退避机制。"""
+        with tempfile.TemporaryDirectory() as d:
+            state_dir = Path(d) / "state"
+            state_dir.mkdir()
+            log_file = state_dir / "last-run.log"
+            log_file.write_text("old log line 1\nold log line 2\n", encoding="utf-8")
+            status_file = state_dir / "status.json"
+            status_file.write_text(json.dumps({"state": "idle"}), encoding="utf-8")
+            cfg_file = state_dir / "config.json"
+            cfg_data = {
+                "source_dir": "/vol1/music",
+                "output_dir": "/vol1/output",
+                "initialized": True,
+                "schedule": {
+                    "enabled": True,
+                    "rule": "daily",
+                    "time": "03:00",
+                    "next_run": "2026-09-20 03:00:00"
+                }
+            }
+            cfg_file.write_text(json.dumps(cfg_data), encoding="utf-8")
+
+            with patch.object(app, "LOG", log_file), \
+                 patch.object(app, "CONFIG", cfg_file), \
+                 patch.object(app, "STATUS", status_file), \
+                 patch.object(app, "LOCK", state_dir / "run.lock"), \
+                 patch.object(app, "config_valid", return_value=(True, "")), \
+                 patch.object(app, "sample_ready", return_value=True), \
+                 patch.object(app, "take_lock", return_value=True):
+                # 1. 模拟 start_mode 触发，验证日志轮转
+                with patch.object(app, "run_pipeline"):
+                    code, _ = app.start_mode("incremental")
+                    self.assertEqual(code, 202)
+                    rotated = log_file.with_name("last-run.1.log")
+                    self.assertTrue(rotated.exists())
+                    self.assertIn("old log line 1", rotated.read_text(encoding="utf-8"))
+                    self.assertIn("正在初始化并启动", log_file.read_text(encoding="utf-8"))
+
+                # 2. 模拟调度器触发失败（先将 status 恢复为 idle，再模拟 start_mode 返回 409 占用），断言 next_run 顺延 10 分钟
+                status_file.write_text(json.dumps({"state": "idle"}), encoding="utf-8")
+                with patch.object(app, "start_mode", return_value=(409, "busy")):
+                    test_now = app.datetime(2026, 9, 20, 3, 0, 0)
+                    with patch.object(app, "get_local_now", return_value=test_now):
+                        triggered = app.check_and_trigger_schedule()
+                        self.assertFalse(triggered)
+                        saved_cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+                        self.assertEqual(saved_cfg["schedule"]["next_run"], "2026-09-20 03:10:00")
+
+
 if __name__ == "__main__":
     unittest.main()
 
