@@ -8,8 +8,10 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -691,6 +693,7 @@ def run_pipeline(mode: str) -> None:
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
         if proxy:
             env["HTTP_PROXY"] = proxy
             env["HTTPS_PROXY"] = proxy
@@ -702,7 +705,7 @@ def run_pipeline(mode: str) -> None:
         py_bin = sys.executable or "python3"
         with LOG.open("a", encoding="utf-8") as handle:
             proc = subprocess.Popen(
-                [py_bin, script_path, mode],
+                [py_bin, "-u", script_path, mode],
                 stdout=handle,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -716,6 +719,14 @@ def run_pipeline(mode: str) -> None:
             current = read_json(STATUS, {})
             if current.get("state") != "idle":
                 write_json(STATUS, {"state": "failed", "message": "整理失败；查看日志", "mode": mode})
+    except Exception as exc:
+        err_msg = traceback.format_exc()
+        try:
+            with LOG.open("a", encoding="utf-8") as handle:
+                handle.write(f"\n[启动异常] 流水线启动失败:\n{err_msg}\n")
+        except Exception:
+            pass
+        write_json(STATUS, {"state": "failed", "message": f"启动异常: {exc}", "mode": mode})
     finally:
         GLOBAL_PIPELINE_PROC = None
         try:
