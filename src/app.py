@@ -537,10 +537,19 @@ def take_lock() -> bool:
 
 
 GLOBAL_PIPELINE_PROC: subprocess.Popen | None = None
+STOP_REQUESTED: bool = False
+
+
+def is_pipeline_running() -> bool:
+    global GLOBAL_PIPELINE_PROC
+    if GLOBAL_PIPELINE_PROC is not None and GLOBAL_PIPELINE_PROC.poll() is None:
+        return True
+    return LOCK.exists()
 
 
 def stop_pipeline() -> None:
-    global GLOBAL_PIPELINE_PROC
+    global GLOBAL_PIPELINE_PROC, STOP_REQUESTED
+    STOP_REQUESTED = True
     proc = GLOBAL_PIPELINE_PROC
     if proc and proc.poll() is None:
         try:
@@ -568,6 +577,7 @@ def stop_pipeline() -> None:
         LOCK.unlink(missing_ok=True)
     except OSError:
         pass
+    write_json(STATUS, {"state": "stopped", "message": "任务已由用户手动停止"})
 
     # Clean up any stale temporary run roots on output disk
     try:
@@ -586,7 +596,7 @@ def stop_pipeline() -> None:
             handle.write(f"\n[{now_str}] 任务已手动停止。\n")
     except Exception:
         pass
-    write_json(STATUS, {"state": "idle", "message": "任务已手动停止"})
+    write_json(STATUS, {"state": "stopped", "message": "任务已由用户手动停止"})
     try:
         with connection() as db_conn:
             db_conn.execute("UPDATE runs SET status='stopped',finished_at=CURRENT_TIMESTAMP WHERE status='running'")
@@ -686,7 +696,8 @@ def reset_system(clear_history: bool = True, clear_inventory: bool = True, clear
 
 
 def run_pipeline(mode: str) -> None:
-    global GLOBAL_PIPELINE_PROC
+    global GLOBAL_PIPELINE_PROC, STOP_REQUESTED
+    STOP_REQUESTED = False
     try:
         cfg_val = read_json(CONFIG, {})
         proxy = str(cfg_val.get("proxy", "")).strip()
@@ -715,9 +726,11 @@ def run_pipeline(mode: str) -> None:
             GLOBAL_PIPELINE_PROC = proc
             returncode = proc.wait()
         GLOBAL_PIPELINE_PROC = None
-        if returncode:
+        if STOP_REQUESTED:
+            write_json(STATUS, {"state": "stopped", "message": "任务已由用户手动停止", "mode": mode})
+        elif returncode:
             current = read_json(STATUS, {})
-            if current.get("state") != "idle":
+            if current.get("state") not in ("idle", "stopped"):
                 write_json(STATUS, {"state": "failed", "message": "整理失败；查看日志", "mode": mode})
     except Exception as exc:
         err_msg = traceback.format_exc()
@@ -1053,6 +1066,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, json.dumps(resp, ensure_ascii=False), "application/json")
         elif parsed.path == "/api/status":
             st = read_json(STATUS, {"state": "idle"})
+            if st.get("state") == "running":
+                global GLOBAL_PIPELINE_PROC
+                proc_dead = False
+                if GLOBAL_PIPELINE_PROC is not None and GLOBAL_PIPELINE_PROC.poll() is not None:
+                    proc_dead = True
+                elif GLOBAL_PIPELINE_PROC is None and not LOCK.exists():
+                    proc_dead = True
+                if proc_dead:
+                    GLOBAL_PIPELINE_PROC = None
+                    try:
+                        LOCK.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    st["state"] = "failed"
+                    st["message"] = "检测到整理子进程异常终止，状态已自愈恢复"
+                    write_json(STATUS, st)
             cfg = get_or_init_config()
             has_pwd = bool(cfg.get("admin_password"))
             st["has_admin_password"] = has_pwd
@@ -1229,17 +1258,31 @@ class Handler(BaseHTTPRequestHandler):
             target_writable = check_writable(target)
             target_readable = check_readable(target)
             try:
-                for child in sorted(target.iterdir(), key=lambda c: c.name.lower()):
-                    if child.is_dir() and not child.name.startswith((".", "@")):
-                        entries.append({
-                            "name": child.name,
-                            "path": str(child),
-                            "readable": target_readable or check_readable(child),
-                            "writable": target_writable or check_writable(child),
-                        })
+                raw_children = list(target.iterdir())
             except Exception as exc:
                 self.send(500, json.dumps({"error": f"读取目录失败: {exc}", "entries": []}, ensure_ascii=False), "application/json")
                 return
+
+            valid_children = []
+            for child in raw_children:
+                try:
+                    if child.name.startswith((".", "@")):
+                        continue
+                    if child.is_dir():
+                        valid_children.append(child)
+                except (OSError, PermissionError):
+                    continue
+
+            for child in sorted(valid_children, key=lambda c: c.name.lower()):
+                try:
+                    entries.append({
+                        "name": child.name,
+                        "path": str(child),
+                        "readable": target_readable or check_readable(child),
+                        "writable": target_writable or check_writable(child),
+                    })
+                except (OSError, PermissionError):
+                    continue
 
             parent_path = str(target.parent) if authorized(target.parent) else ""
             self.send(200, json.dumps({
@@ -1412,6 +1455,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, json.dumps({"cleared": True}, ensure_ascii=False), "application/json")
             return
         if self.path == "/api/reset":
+            st = read_json(STATUS, {})
+            if st.get("state") == "running" or is_pipeline_running():
+                self.send(409, json.dumps({"ok": False, "error": "整理任务正在运行中，禁止执行系统重置", "code": "task_running"}, ensure_ascii=False), "application/json")
+                return
             try:
                 res = reset_system(
                     clear_history=bool(body.get("clear_history", True)),
@@ -1419,6 +1466,8 @@ class Handler(BaseHTTPRequestHandler):
                     clear_kb=bool(body.get("clear_kb", body.get("clear_knowledge_base", False))),
                     clear_ncm=bool(body.get("clear_ncm", body.get("clear_ncm_cache", False)))
                 )
+                self.send(200, json.dumps(res, ensure_ascii=False), "application/json")
+                return
             except Exception as exc:
                 self.send(400, json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), "application/json")
                 return

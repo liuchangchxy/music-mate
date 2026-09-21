@@ -2896,21 +2896,27 @@
       currentLang = currentLang === "zh" ? "en" : "zh";
       localStorage.setItem("fn-music-lang", currentLang);
       applyLanguage();
-      renderConfig(configCache);
-      renderStatus(stateCache);
-      renderMetrics(stateCache.report ? (stateCache.report.metrics || {}) : {});
-      updateActionButtons();
-      const runs = (stateCache && stateCache.recent_runs) || (stateCache.report && stateCache.report.recent_runs);
-      if (runs) {
-        renderRuns(runs);
-      }
-      if (currentRunDetails) {
-        renderRunDetailsView();
-      }
-      const uModal = document.getElementById("unresolvedModal");
-      if (uModal && uModal.classList.contains("active")) {
-        renderUnresolvedView();
-      }
+      try { renderConfig(configCache); } catch (e) { console.error("Error in renderConfig:", e); }
+      try { renderStatus(stateCache); } catch (e) { console.error("Error in renderStatus:", e); }
+      try { renderMetrics(stateCache.report ? (stateCache.report.metrics || {}) : {}); } catch (e) { console.error("Error in renderMetrics:", e); }
+      try { updateActionButtons(); } catch (e) { console.error("Error in updateActionButtons:", e); }
+      try {
+        const runs = (stateCache && stateCache.recent_runs) || (stateCache.report && stateCache.report.recent_runs);
+        if (runs) {
+          renderRuns(runs);
+        }
+      } catch (e) { console.error("Error in renderRuns:", e); }
+      try {
+        if (currentRunDetails) {
+          renderRunDetailsView();
+        }
+      } catch (e) { console.error("Error in renderRunDetailsView:", e); }
+      try {
+        const uModal = document.getElementById("unresolvedModal");
+        if (uModal && uModal.classList.contains("active")) {
+          renderUnresolvedView();
+        }
+      } catch (e) { console.error("Error in renderUnresolvedView:", e); }
     }
 
     function applyLanguage() {
@@ -3383,15 +3389,21 @@
         const st = await fetchJSON("/api/status");
         if (st) {
           stateCache = st;
-          renderStatus(st);
-          if (st.report && st.report.metrics) {
-            renderMetrics(st.report.metrics);
-          }
-          const runs = st.recent_runs || (st.report && st.report.recent_runs);
-          if (runs) {
-            renderRuns(runs);
-          }
-          renderUnresolvedBanner((st.unresolvable_count || 0) + (st.fallback_count || 0));
+          try { renderStatus(st); } catch (e) { console.error("Error in renderStatus:", e); }
+          try {
+            if (st.report && st.report.metrics) {
+              renderMetrics(st.report.metrics);
+            }
+          } catch (e) { console.error("Error in renderMetrics:", e); }
+          try {
+            const runs = st.recent_runs || (st.report && st.report.recent_runs);
+            if (runs) {
+              renderRuns(runs);
+            }
+          } catch (e) { console.error("Error in renderRuns:", e); }
+          try {
+            renderUnresolvedBanner((st.unresolvable_count || 0) + (st.fallback_count || 0));
+          } catch (e) { console.error("Error in renderUnresolvedBanner:", e); }
         }
       } catch (err) {
         console.error("Error rendering status/metrics:", err);
@@ -3496,6 +3508,7 @@
       const elCover = document.getElementById("m-cover");
       const elVersion = document.getElementById("m-version");
       const elFailed = document.getElementById("m-failed");
+      const mH = t("metricsHints") || {};
 
       const scannedVal = m.scanned_total !== undefined ? m.scanned_total : (m.scanned || 0);
       const publishedVal = m.published || 0;
@@ -4273,6 +4286,13 @@
       }
     }
 
+    function handleUnresolvedBtnClick(btn) {
+      if (!btn) return;
+      const action = btn.getAttribute("data-action");
+      const path = btn.getAttribute("data-path") || "";
+      handleUnresolvedAction(action, path);
+    }
+
     function renderUnresolvedView() {
       const listEl = document.getElementById("unresolvedListContainer");
       const badgeEl = document.getElementById("unresolvedModalCountBadge");
@@ -4350,7 +4370,7 @@
                         ${escapeHTML(it.retry_reason || (currentLang === 'zh' ? '重试超限或未匹配到有效在线信息' : 'Max retries reached / Scraping failed'))}
                       </td>
                       <td style="text-align:center;">
-                        <button type="button" class="btn-link" onclick="handleUnresolvedAction('fallback_publish_one', '${escapeHTML(it.source_path || '').replace(/'/g, "\\'")}')">
+                        <button type="button" class="btn-link" data-action="fallback_publish_one" data-path="${escapeHTML(it.source_path || '')}" onclick="handleUnresolvedBtnClick(this)">
                           ${escapeHTML(t("unresolvedModal.actionPublishOne"))} &raquo;
                         </button>
                       </td>

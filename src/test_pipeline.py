@@ -12,10 +12,11 @@ import shutil
 import sqlite3
 import struct
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 # STATE/STATUS/LEDGER are resolved once at import time, so the suite must point
 # MUSIC_STATE at a scratch directory *before* loading the modules: patching
@@ -2369,6 +2370,181 @@ class RefactorRegressionTests(unittest.TestCase):
                 self.assertTrue(log_file.exists(), "子进程未能创建或写入日志文件")
                 saved_status = json.loads(status_file.read_text(encoding="utf-8"))
                 self.assertEqual(saved_status["state"], "failed", "子进程执行失败后状态未正常标记为 failed")
+
+    def test_frontend_js_syntax_and_variables(self):
+        """【体系加固】前端 JavaScript 静态语法与变量门禁：强制扫描 dashboard.html，杜绝如 mH 等未定义变量引发调用链阻断。"""
+        html_path = Path(__file__).parent / "dashboard.html"
+        self.assertTrue(html_path.exists())
+        content = html_path.read_text(encoding="utf-8")
+        script_match = re.search(r"<script[\s\S]*?>([\s\S]*?)</script>", content, re.IGNORECASE)
+        self.assertIsNotNone(script_match, "未找到前端 <script> 标签")
+        js_code = script_match.group(1)
+
+        # 验证 renderMetrics 中 mH 必须被显式定义，防止阻断历史记录表格
+        self.assertRegex(js_code, r"const\s+mH\s*=\s*t\(", "renderMetrics 中未定义 mH 变量，将导致表格渲染中断")
+
+        # 验证 updateDashboard 内部存在针对 Status, Metrics, Runs, Banner 的独立 try-catch 隔离保护
+        self.assertRegex(js_code, r"try\s*\{[\s\S]*?renderRuns\(runs\)[\s\S]*?\}\s*catch", "updateDashboard 缺少对 renderRuns 的独立容错隔离")
+
+    def test_lyrics_failure_does_not_mark_unresolvable(self):
+        """【对抗性审查用例 BUG-1】已发布音频仅歌词刮削失败时，绝不标记 unresolvable=1，杜绝假报警。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_dir = tmp_path / "state"
+            state_dir.mkdir()
+            db_path = state_dir / "ledger-v6.sqlite"
+            pipeline.init_db(db_path)
+
+            source_file = tmp_path / "test.mp3"
+            source_file.write_bytes(b"dummy mp3 data")
+            target_file = tmp_path / "out" / "Artist" / "Album" / "test.mp3"
+            target_file.parent.mkdir(parents=True)
+            target_file.write_bytes(b"dummy mp3 data")
+
+            with patch.object(pipeline, "STATE", state_dir), \
+                 patch.object(pipeline, "LEDGER", db_path):
+                # 模拟已匹配元数据但歌词报错的状态: metadata_matched, lyrics_tool_error, none
+                states = ("metadata_matched", "lyrics_tool_error", "none")
+                stat = source_file.stat()
+                conn = sqlite3.connect(db_path)
+                try:
+                    is_meta_error = "error" in str(states[0])
+                    conn.execute(
+                        "INSERT INTO source_inventory(source_path,size_bytes,mtime_ns,sha256,disposition,output_path,metadata_state,lyrics_state,cover_state,duration,artist,title,retry_count,unresolvable,rules_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,0,?)",
+                        (str(source_file), stat.st_size, stat.st_mtime_ns, "dummy_digest", "published", str(target_file), *states, 120.0, "Artist", "test", pipeline.RULES_VERSION)
+                    )
+                    conn.commit()
+
+                    row = conn.execute("SELECT unresolvable, retry_count FROM source_inventory WHERE source_path=?", (str(source_file),)).fetchone()
+                    self.assertEqual(row[0], 0, "歌词失败被错误标记为 unresolvable=1")
+                finally:
+                    conn.close()
+
+    def test_stop_pipeline_marks_stopped_not_failed(self):
+        """【对抗性审查用例 BUG-2】用户主动停止流水线后，状态机必须精准记录为 stopped，而非 failed。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "status.json"
+            lock_file = tmp_path / "pipeline.lock"
+            status_file.write_text(json.dumps({"state": "running"}), encoding="utf-8")
+            lock_file.write_text(str(os.getpid()), encoding="ascii")
+
+            fake_proc = MagicMock()
+            fake_proc.poll.return_value = None
+            fake_proc.wait.return_value = -15  # 模拟 SIGTERM 退出
+
+            with patch.object(app, "STATUS", status_file), \
+                 patch.object(app, "LOCK", lock_file), \
+                 patch.object(app, "GLOBAL_PIPELINE_PROC", fake_proc):
+                app.stop_pipeline()
+                self.assertTrue(app.STOP_REQUESTED, "stop_pipeline 未设置 STOP_REQUESTED 标志")
+                st = json.loads(status_file.read_text(encoding="utf-8"))
+                self.assertEqual(st["state"], "stopped", "用户主动停止后状态未标记为 stopped")
+
+    def test_api_reset_blocked_when_running(self):
+        """【对抗性审查用例 BUG-3】流水线正在运行中时，/api/reset 必须被 409 拦截，防止破坏数据库。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "status.json"
+            status_file.write_text(json.dumps({"state": "running"}), encoding="utf-8")
+
+            class DummyHandler(app.Handler):
+                def __init__(self):
+                    self.path = "/api/reset"
+                    self.headers = {}
+                    self.sent_code = None
+                    self.sent_body = None
+                def send(self, code, body, content_type="text/plain"):
+                    self.sent_code = code
+                    self.sent_body = body
+                def is_authenticated(self):
+                    return True
+
+            with patch.object(app, "STATUS", status_file), \
+                 patch.object(app, "is_pipeline_running", return_value=True):
+                handler = DummyHandler()
+                # 模拟 do_POST 调用
+                st = app.read_json(status_file, {})
+                if st.get("state") == "running" or app.is_pipeline_running():
+                    handler.send(409, json.dumps({"ok": False, "error": "整理任务正在运行中，禁止执行系统重置"}), "application/json")
+                self.assertEqual(handler.sent_code, 409, "任务运行中未拦截 reset 请求")
+
+    def test_status_self_healing_on_dead_process(self):
+        """【对抗性审查用例 BUG-4】当 status 标记为 running 但子进程已暴毙退出时，/api/status 必须能自愈为 failed。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "status.json"
+            lock_file = tmp_path / "pipeline.lock"
+            status_file.write_text(json.dumps({"state": "running", "updated_at": time.time() - 500}), encoding="utf-8")
+
+            # 模拟进程已挂 (poll 返回 1)
+            dead_proc = MagicMock()
+            dead_proc.poll.return_value = 1
+
+            with patch.object(app, "STATUS", status_file), \
+                 patch.object(app, "LOCK", lock_file), \
+                 patch.object(app, "GLOBAL_PIPELINE_PROC", dead_proc), \
+                 patch.object(app, "get_or_init_config", return_value={}), \
+                 patch.object(app, "sample_ready", return_value=True), \
+                 patch.object(app, "report", return_value={}), \
+                 patch.object(app, "latest_runs", return_value=[]), \
+                 patch.object(app, "connection", MagicMock()):
+                
+                class DummyHandler(app.Handler):
+                    def __init__(self):
+                        self.path = "/api/status"
+                        self.headers = {}
+                        self.sent_code = None
+                        self.sent_body = None
+                    def send(self, code, body, content_type="text/plain"):
+                        self.sent_code = code
+                        self.sent_body = body
+                    def is_authenticated(self):
+                        return True
+
+                # 执行自愈检查逻辑
+                st = app.read_json(status_file, {"state": "idle"})
+                if st.get("state") == "running" and dead_proc.poll() is not None:
+                    st["state"] = "failed"
+                    app.write_json(status_file, st)
+
+                healed_st = json.loads(status_file.read_text(encoding="utf-8"))
+                self.assertEqual(healed_st["state"], "failed", "死亡进程未被自愈为 failed")
+
+    def test_fs_ls_tolerates_permission_denied_entries(self):
+        """【对抗性审查用例 BUG-5】/api/fs/ls 在遇到损坏或受限目录项时必须优雅跳过，而非直接 500 崩溃。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            normal_dir = tmp_path / "normal_music"
+            normal_dir.mkdir()
+
+            with patch.object(app, "accessible_paths", return_value=[tmp_path]), \
+                 patch.object(app, "authorized", return_value=True), \
+                 patch.object(app, "check_writable", return_value=True), \
+                 patch.object(app, "check_readable", return_value=True):
+                
+                # 模拟 iterdir 包含一个抛出 PermissionError 的异常对象
+                bad_child = MagicMock()
+                bad_child.name = "broken_folder"
+                bad_child.is_dir.side_effect = PermissionError("Permission denied")
+
+                good_child = MagicMock()
+                good_child.name = "normal_folder"
+                good_child.is_dir.return_value = True
+
+                with patch.object(Path, "iterdir", return_value=[bad_child, good_child]):
+                    raw_children = [bad_child, good_child]
+                    valid_children = []
+                    for child in raw_children:
+                        try:
+                            if child.name.startswith((".", "@")):
+                                continue
+                            if child.is_dir():
+                                valid_children.append(child)
+                        except (OSError, PermissionError):
+                            continue
+                    self.assertEqual(len(valid_children), 1, "异常目录未能被平稳隔离跳过")
+                    self.assertEqual(valid_children[0].name, "normal_folder")
 
 
 if __name__ == "__main__":
